@@ -1,0 +1,9 @@
+numpy
+scipy
+matplotlib
+jupyter
+pytest
+
+# Optional — only needed if the stretch goals are attempted:
+# streamlit         # webapp UI, added last
+# sounddevice       # real acoustic validation experiment
