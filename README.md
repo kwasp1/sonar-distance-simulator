@@ -1,7 +1,7 @@
 # Sonar Distance Simulator
 
 CSE220 Signals and Systems — Team SevenEight
-Aditya Tirtho Roy (2305178) & [Team Member 2]
+Aditya Tirtho Roy (2305178) & Farhan Ehsas Sami (2305177)
 
 Pulse-echo ranging simulator: matched filtering / cross-correlation based
 delay estimation, evaluated under additive noise and pulse-bandwidth variation.
