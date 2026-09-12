@@ -104,3 +104,12 @@ def add_noise(
     noise = rng.normal(0.0, np.sqrt(noise_power), signal.shape)
 
     return signal + noise
+
+def simulate_multi_object_channel(pulse, distances_m, fs, attenuations=None, **kwargs):
+    if attenuations is None:
+        attenuations = [1.0] * len(distances_m)
+    buffer = None
+    for d, att in zip(distances_m, attenuations):
+        echo = simulate_channel(pulse, d, fs, attenuation=att, **kwargs)
+        buffer = echo if buffer is None else buffer + echo
+    return buffer

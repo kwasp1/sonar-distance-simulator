@@ -5,6 +5,7 @@ RULE: Return data only. No plotting or printing in this file.
 """
 
 import numpy as np
+from scipy.signal import hilbert, find_peaks
 
 
 def matched_filter(received_signal: np.ndarray, pulse: np.ndarray) -> np.ndarray:
@@ -56,3 +57,17 @@ def estimate_distance(
     round_trip_time_s = delay_samples / fs
     estimated_distance_m = (round_trip_time_s * speed_mps) / 2
     return estimated_distance_m, correlation
+
+def estimate_multiple_distances(received_signal, pulse, fs, speed_mps=343.0,
+                                prominence_frac=0.4, min_separation_samples=None):
+    correlation = matched_filter(received_signal, pulse)
+    envelope = np.abs(hilbert(correlation))
+    if min_separation_samples is None:
+        min_separation_samples = len(pulse) // 2
+    peak_indices, _ = find_peaks(
+        envelope,
+        prominence=envelope.max() * prominence_frac,
+        distance=min_separation_samples,
+    )
+    distances = [(pk - (len(pulse) - 1)) / fs * speed_mps / 2 for pk in peak_indices]
+    return sorted(distances)
