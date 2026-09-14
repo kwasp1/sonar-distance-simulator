@@ -116,7 +116,6 @@ Runs repeated Monte Carlo experiments to generate the performance curves needed 
 | Function | Signature & Inputs | Output | Description & Purpose |
 |---|---|---|---|
 | `run_snr_sweep` | `true_distance_m: float`<br>`snr_values_db: list[float]`<br>`fs: float`<br>`pulse_type: str = "gaussian"`<br>`trials_per_snr: int = 20`<br>`bandpass: bool = False`<br>... | `dict` containing:<br>`"snr_db"`: list<br>`"rmse_m"`: list | Simulates repeated noisy transmissions at each SNR level (e.g. from -10 dB to +30 dB). Computes Root Mean Square Error (RMSE) in meters to assess performance degradation under harsh noise. |
-| `run_bandwidth_resolution_sweep` | `fs: float`<br>`pulse_durations_s: list[float]`<br>`separation_range_m: tuple[float, float]` | `dict` (durations, bandwidths, min_resolutions) | *(In progress)* Evaluates the minimum physical separation needed between two targets for both to be resolved as separate peaks, as a function of pulse bandwidth. |
 
 ---
 

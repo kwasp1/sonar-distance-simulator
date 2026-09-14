@@ -50,7 +50,7 @@ core logic instead of just writing a new thin display file.
 | 3. Matched filter | `src/receiver.py` | `matched_filter()` |
 | 4. Distance estimate | `src/receiver.py` | `estimate_distance()` |
 | Optional filtering | `src/filters.py` | `bandpass_filter()` |
-| 5. Evaluation sweeps | `src/evaluate.py` | `run_snr_sweep()`, `run_bandwidth_resolution_sweep()` |
+| 5. Evaluation sweeps | `src/evaluate.py` | `run_snr_sweep()` |
 | Display (notebook) | `notebooks/` | calls `src/` functions, does the plotting |
 | Display (webapp, LAST) | `app/streamlit_app.py` | thin wrapper, calls `src/` functions only |
 
