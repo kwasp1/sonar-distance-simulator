@@ -30,6 +30,7 @@ def simulate_channel(
     Returns:
         1D numpy array: the "received" signal, noiseless (add noise separately with add_noise()).
     """
+    pulse = np.asarray(pulse, dtype=float)
     if true_distance_m <= 0:
         raise ValueError(f"true_distance_m={true_distance_m} must be positive")
     if speed_mps <= 0:
@@ -105,11 +106,35 @@ def add_noise(
 
     return signal + noise
 
-def simulate_multi_object_channel(pulse, distances_m, fs, attenuations=None, **kwargs):
+def simulate_multi_object_channel(
+    pulse: np.ndarray,
+    distances_m: list[float],
+    fs: float,
+    attenuations: list[float] | None = None,
+    **kwargs,
+) -> np.ndarray:
+    if len(distances_m) == 0:
+        raise ValueError("distances_m is empty; need at least one reflector")
+
     if attenuations is None:
         attenuations = [1.0] * len(distances_m)
-    buffer = None
-    for d, att in zip(distances_m, attenuations):
-        echo = simulate_channel(pulse, d, fs, attenuation=att, **kwargs)
-        buffer = echo if buffer is None else buffer + echo
+    elif len(attenuations) != len(distances_m):
+        raise ValueError(
+            f"attenuations has {len(attenuations)} entries but distances_m has "
+            f"{len(distances_m)}; they must match"
+        )
+
+    for d in distances_m:
+        if d <= 0:
+            raise ValueError(f"distance {d} must be positive")
+
+    for att in attenuations:
+        if att < 0:
+            raise ValueError(f"attenuation {att} must be non-negative")
+
+    buffer = simulate_channel(
+        pulse, distances_m[0], fs, attenuation=attenuations[0], **kwargs
+    )
+    for d, att in zip(distances_m[1:], attenuations[1:]):
+        buffer += simulate_channel(pulse, d, fs, attenuation=att, **kwargs)
     return buffer

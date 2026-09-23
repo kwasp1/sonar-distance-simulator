@@ -38,9 +38,6 @@ def bandpass_filter(
             f"cutoffs must satisfy 0 < low_hz < high_hz < {nyq} Hz "
             f"(got low_hz={low_hz}, high_hz={high_hz})"
         )
-    
-    nyq = 0.5 * fs
-    low = low_hz / nyq
-    high = high_hz / nyq
+
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, signal)

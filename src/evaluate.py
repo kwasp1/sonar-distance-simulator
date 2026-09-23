@@ -39,6 +39,16 @@ def run_snr_sweep(
         measured_bw = pulse_bandwidth_hz(pulse, fs)
         low_hz = freq_hz - measured_bw
         high_hz = freq_hz + measured_bw
+        if low_hz <= 0:
+            raise ValueError(
+                f"bandpass filter low_hz={low_hz} <= 0; "
+                f"try a longer duration_s or higher freq_hz"
+            )
+        if high_hz >= fs / 2:
+            raise ValueError(
+                f"bandpass filter high_hz={high_hz} >= fs/2; "
+                f"try a longer duration_s or lower freq_hz"
+            )
 
     snr_list, rmse_list = [], []
     for snr_db in snr_values_db:
