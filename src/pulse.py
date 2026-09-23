@@ -60,7 +60,7 @@ def generate_pulse(
     nyquist_hz = fs / 2
 
     if freq_hz is None:
-        raise ValueError("freq_hz is required for pulse_type='rect'")
+        raise ValueError(f"freq_hz is required for pulse_type={pulse_type!r}")
     if not 0 <= freq_hz <= nyquist_hz:
         raise ValueError(f"freq_hz={freq_hz} must be in [0, {nyquist_hz}]")
 
