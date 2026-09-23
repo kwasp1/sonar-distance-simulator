@@ -11,19 +11,35 @@ Full spec: see `docs/Sonar_Distance_Simulator_Documentation.docx`.
 ## Setup
 
 ```bash
-python -m venv venv
-source venv/bin/activate      # or venv\Scripts\activate on Windows
+python -m venv sonar-env
+source sonar-env/bin/activate      # or sonar-env\Scripts\activate on Windows
 pip install -r requirements.txt
+```
+
+`sounddevice` is only needed to record real audio; drop that line from
+`requirements.txt` if you just want the simulation and the tests.
+
+```bash
+python -m pytest -q        # 29 tests
+python check_pulse.py      # 17 pulse-maths checks
 ```
 
 ## Structure
 
 ```
 src/            core pipeline — pure functions, no plotting/printing
+  pulse.py        transmit pulses + bandwidth measurement
+  channel.py      delay, attenuation, multiple targets, AWGN
+  receiver.py     matched filter, single and multi-target ranging
+  filters.py      Butterworth band-pass
+  evaluate.py     SNR and bandwidth sweeps
+  audio.py        makes any signal listenable (.wav bytes)
+  acoustic.py     analysis of real speaker/microphone recordings
 notebooks/      exploration + demo plots (Matplotlib)
-app/            optional Streamlit webapp (added last, if time allows)
-tests/          sanity checks (e.g. noiseless delay recovery)
-results/        generated plots for the report
+app/            Streamlit webapp — owned by Farhan, do not edit
+tests/          pytest suite
+results/        generated plots for the report (audio/plots are gitignored)
+physical_sonar_check/   hardware capture script + archived recordings
 docs/           project documentation
 ```
 
@@ -43,3 +59,6 @@ a rewrite.
 | 2 | Matched filter, AWGN, SNR sweep, RMSE plot |
 | 3 | Band-pass filtering, bandwidth/resolution study |
 | 4 | Evaluation, report, demo (+ stretch goals if ahead of schedule) |
+
+All nine committed features are implemented. Remaining work is report
+production: plots into `results/`, then the write-up.

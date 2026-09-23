@@ -12,9 +12,11 @@ convert it to a distance estimate. Study how noise (SNR) and pulse
 bandwidth affect estimation accuracy.
 
 This is **not a hardware project**. No microcontroller, no physical sensor.
-Everything is numpy arrays. The only possible hardware touchpoint is an
-OPTIONAL stretch goal: an acoustic validation test using a laptop's own
-speaker + mic — not required, not core scope.
+Everything is numpy arrays. The one hardware touchpoint is the acoustic
+validation stretch goal — a laptop's own speaker + mic — which is now
+**implemented and validated** (`src/acoustic.py`, captured with
+`physical_sonar_check/record_acoustic.py`). Two real detections confirm it:
+a wall at 1.797 m and a hand at 0.272 m, both above 6 sigma.
 
 ## Non-negotiable architecture rule
 
@@ -50,9 +52,19 @@ core logic instead of just writing a new thin display file.
 | 3. Matched filter | `src/receiver.py` | `matched_filter()` |
 | 4. Distance estimate | `src/receiver.py` | `estimate_distance()` |
 | Optional filtering | `src/filters.py` | `bandpass_filter()` |
-| 5. Evaluation sweeps | `src/evaluate.py` | `run_snr_sweep()` |
+| 5. Evaluation sweeps | `src/evaluate.py` | `run_snr_sweep()`, `run_bandwidth_resolution_sweep()` |
+| Playback | `src/audio.py` | `make_audible()`, `audible_echo()`, `to_wav_bytes()` |
+| Real acoustic ranging | `src/acoustic.py` | `analyse_recording()`, `design_chirp()` |
 | Display (notebook) | `notebooks/` | calls `src/` functions, does the plotting |
-| Display (webapp, LAST) | `app/streamlit_app.py` | thin wrapper, calls `src/` functions only |
+| Display (webapp) | `app/streamlit_app.py` | **owned by Farhan — do not edit** |
+
+`src/audio.py` and `src/acoustic.py` follow the same rule: they return arrays
+and `.wav` bytes, and never play, record, plot or print. Recording audio
+happens only in `physical_sonar_check/record_acoustic.py`.
+
+`app/streamlit_app.py` imports ten functions from `src/`. Keep those
+signatures stable; add new functions rather than reshaping existing ones, and
+flag it if a breaking change is genuinely needed.
 
 Function signatures/docstrings are already stubbed in each file — implement
 against those contracts rather than changing them, so notebook/app code
