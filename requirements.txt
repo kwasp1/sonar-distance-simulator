@@ -15,6 +15,7 @@ pytest==9.1.1
 
 # Interactive interface (app/streamlit_app.py)
 streamlit==1.63.0
+plotly>=5.18.0
 
 # Optional -- only needed to record real audio with
 # physical_sonar_check/record_acoustic.py. It pulls in PortAudio, so remove
