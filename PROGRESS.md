@@ -63,19 +63,24 @@ the big mostly-empty thing. The *position* it sits at is what encodes distance.
 Five stages. Each is a separate file in `src/`.
 
 ```
-  generate_pulse()      Make the beep                     [pulse.py]   DONE
+  generate_pulse()      Make the beep                     [pulse.py]    DONE
          ↓
-  simulate_channel()    Fake the echo bouncing back       [channel.py] DONE
+  simulate_channel()    Fake the echo bouncing back       [channel.py]  DONE
          ↓
-  add_noise()           Corrupt it, like a real mic       [channel.py] DONE
+  add_noise()           Corrupt it, like a real mic       [channel.py]  DONE
          ↓
-  matched_filter()      Find the echo in the mess         [receiver.py] TODO
+  matched_filter()      Find the echo in the mess         [receiver.py] DONE
          ↓
-  estimate_distance()   Turn its position into metres     [receiver.py] TODO
+  estimate_distance()   Turn its position into metres     [receiver.py] DONE
 ```
 
-Plus evaluation sweeps in `evaluate.py` (TODO) that run this whole chain
-hundreds of times to build the report graphs.
+Plus three things built on top, all done:
+
+- `evaluate.py` — runs the chain hundreds of times to build the report graphs
+  (noise sweep and bandwidth sweep).
+- `audio.py` — turns any of these arrays into sound you can actually listen to.
+- `acoustic.py` — the same maths applied to a *real* recording from the laptop
+  speaker and microphone, instead of a simulated one.
 
 ### The architecture rule
 
@@ -223,8 +228,16 @@ and because comparing pulse types is cleaner against identical noise.
 
 ## 6. Verification
 
-A throwaway script `check_pulse.py` runs 17 automated checks against `pulse.py`.
-All pass. It verifies:
+**29 pytest cases, all green**, plus 17 checks in `check_pulse.py`. Run them
+with `python -m pytest -q` and `python check_pulse.py`.
+
+The suite covers the Week 1 noiseless gate, multi-object detection, the
+bandwidth-resolution trend, playback shape and loop-safety, and — the one
+worth knowing about — **a real microphone recording**. `tests/test_acoustic.py`
+re-derives an archived capture of a wall bit-for-bit, so the acoustic code
+stays honest with no hardware attached.
+
+`check_pulse.py` runs 17 automated checks against `pulse.py`. It verifies:
 
 - Pulse lengths and unit-energy normalisation
 - Gaussian symmetry and centring
@@ -254,15 +267,31 @@ trials per noise level and average them — one trial is one dice roll.
 
 Three things discovered along the way that will matter later:
 
-**Raw `argmax` on the correlation is unreliable.** The correlation output
-oscillates rapidly, so it has a peak every few samples — in one test, 18 of
-them. You need the *envelope* (via `scipy.signal.hilbert`) before taking
-`argmax`, or you will land on the wrong crest. This affects
-`estimate_distance()` directly.
+**Envelope for counting echoes, raw correlation for locating one.** These are
+opposite answers to two different questions, and the earlier draft of this
+document got it backwards.
+
+*Finding one echo* — `estimate_distance()` uses raw `np.argmax`, deliberately.
+The envelope was tried and was **worse at every SNR tested**, because smoothing
+widens the peak and a wider peak is easier for noise to nudge. Do not "fix"
+this to use the envelope.
+
+*Counting several echoes* — `estimate_multiple_distances()` does use the
+Hilbert envelope, because the raw correlation oscillates at the carrier and
+counting its crests found 18 "peaks" in a genuine 2-object scene. The envelope
+plus `find_peaks` found exactly 2.
 
 **`np.correlate(..., mode="full")` shifts the index.** With the echo placed
 *starting* at `delay_samples`, the correlation peaks at
 `delay_samples + len(pulse) − 1`. The receiver must subtract `len(pulse) − 1`.
+
+**A detector's own settings can fake a physics result.** The receiver's
+`min_separation_samples` defaults to `len(pulse)//2` — a floor set by pulse
+*length*, which has nothing to do with bandwidth. Left at that default, the
+bandwidth sweep pinned every chirp at exactly 17.0 cm across a 3.5x bandwidth
+range: a flat line that looks like a real finding and says the opposite of the
+truth. Any measurement has to check that it is measuring the physics and not
+its own tuning.
 
 **Chirp bandwidth measures narrower than its nominal sweep.** A chirp's spectral
 edges roll off rather than cutting sharply, so a 2000 Hz sweep measures about
@@ -284,25 +313,50 @@ bit-exact for an arbitrary distance. Either pick a distance that lands on a
 whole number of samples (recommended, so a failure means a real bug rather than
 mere imprecision), or allow tolerance and document why.
 
+The same floor shows up in the noise sweep: RMSE bottoms out at about 1.8 mm
+rather than zero at high SNR. That is sample quantisation, not a bug.
+
 ---
 
 ## 9. What is next
 
-**Immediate: `receiver.py`.**
+**All nine committed features are built.** Everything below the line is
+report production, not code.
 
-- `matched_filter()` — slides the original beep along the noisy recording,
-  scoring the match at every position. Wherever it scores highest is the best
-  guess for where the echo is. This is provably the best possible way to find a
-  known shape hidden in random noise, which is why radar, sonar, and GPS all use
-  it.
-- `estimate_distance()` — converts that position into metres.
+### What got finished after this document was first written
 
-**Then: `tests/test_pipeline.py`** — the Week 1 gate. With no noise and no
-attenuation, does a planted distance come back out exactly? Everything else
-builds on this being correct, so it must pass before any noise work starts.
+- **`receiver.py`** — `matched_filter()` slides the original beep along the
+  noisy recording, scoring the match at every position; the highest score is
+  the echo. This is provably the best way to find a known shape hidden in
+  random noise, which is why radar, sonar and GPS all use it.
+  `estimate_distance()` turns that position into metres.
+- **`filters.py`** — band-pass pre-filtering. The honest result is that it
+  barely helps, because the matched filter is already optimal against white
+  noise. A null result with a theoretical explanation, not a failure.
+- **`evaluate.py`** — both sweeps. `run_snr_sweep()` answers "how much noise
+  before it breaks"; `run_bandwidth_resolution_sweep()` answers "how close can
+  two objects get". The second one needed its own detector settings rather
+  than the receiver's defaults — see PROJECT_OVERVIEW for why.
+- **`audio.py`** — turns any pulse or received buffer into something you can
+  actually listen to. A 2 ms beep is far too short and quiet to hear, so it is
+  slowed down, repeated with gaps into a sonar-like ping, and faded at the
+  edges so it loops without clicking.
+- **`acoustic.py`** — the same ranging maths applied to a real recording from
+  the laptop speaker and microphone. Verified twice against reality: a wall at
+  1.797 m and a hand held 30 cm above the keyboard, measured at 0.272 m. Both
+  above the 6-sigma bar for a real detection.
+- **Tests** — 29 pytest cases, including one that re-derives an archived real
+  recording bit-for-bit, so the acoustic code stays honest without a mic
+  attached.
 
-**Then:** `filters.py` (band-pass pre-processing), `evaluate.py` (the two
-sweeps), the report, and the Streamlit app last if time allows.
+### What is left
+
+1. **Plots.** `notebooks/` is still empty. Five sweeps and two real acoustic
+   measurements are computed but nothing has been drawn yet. This is the
+   biggest remaining gap.
+2. **The report.**
+3. Optional polish: steadier numbers in the bandwidth sweep (per-config random
+   seeds), and folding the acoustic result into the written evaluation.
 
 ---
 

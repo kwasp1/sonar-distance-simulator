@@ -46,8 +46,6 @@ def estimate_distance(
         raise ValueError(f"fs={fs} must be positive")
     if speed_mps <= 0:
         raise ValueError(f"speed_mps={speed_mps} must be positive") 
-    received_signal = np.asarray(received_signal, dtype=float)
-    pulse = np.asarray(pulse, dtype=float)
     correlation = matched_filter(received_signal, pulse)
     # Raw argmax, not the Hilbert envelope: the raw correlation peak is sharper,
     # so it localises better under noise. The envelope is only needed for

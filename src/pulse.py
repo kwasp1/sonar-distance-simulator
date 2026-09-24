@@ -59,18 +59,15 @@ def generate_pulse(
     t_s = (np.arange(n_samples) - (n_samples - 1) / 2) / fs
     nyquist_hz = fs / 2
 
+    if freq_hz is None:
+        raise ValueError(f"freq_hz is required for pulse_type={pulse_type!r}")
+    if not 0 <= freq_hz <= nyquist_hz:
+        raise ValueError(f"freq_hz={freq_hz} must be in [0, {nyquist_hz}]")
+
     if pulse_type == "rect":
-        if freq_hz is None:
-            raise ValueError("freq_hz is required for pulse_type='rect'")
-        if not 0 <= freq_hz <= nyquist_hz:
-            raise ValueError(f"freq_hz={freq_hz} must be in [0, {nyquist_hz}]")
         return _normalize(np.cos(2 * np.pi * freq_hz * t_s))
 
     if pulse_type == "gaussian":
-        if freq_hz is None:
-            raise ValueError("freq_hz is required for pulse_type='gaussian'")
-        if not 0 <= freq_hz <= nyquist_hz:
-            raise ValueError(f"freq_hz={freq_hz} must be in [0, {nyquist_hz}]")
         # sigma set so the envelope tapers to ~0 at both edges of duration_s
         sigma_s = duration_s / 6
         envelope = np.exp(-(t_s ** 2) / (2 * sigma_s ** 2))
@@ -78,8 +75,6 @@ def generate_pulse(
         return _normalize(envelope * carrier)
 
     if pulse_type == "chirp":
-        if freq_hz is None:
-            raise ValueError("freq_hz is required for pulse_type='chirp'")
         sweep_hz = freq_hz if bandwidth_hz is None else bandwidth_hz
         if sweep_hz < 0:
             raise ValueError(f"bandwidth_hz={sweep_hz} must be non-negative")

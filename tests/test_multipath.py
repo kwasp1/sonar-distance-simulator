@@ -1,9 +1,9 @@
 """
 tests/test_multipath.py
 
-Correctness gate for multi-object detection: does not need to explore
-edges or characterize behaviour (that's check_multipath.py) -- just
-confirms the core claim works before anything is built on top of it.
+Correctness gate for multi-object detection: confirms the core claim works
+before anything is built on top of it. Characterising where the limit
+actually falls is tests/test_resolution.py's job, via the bandwidth sweep.
 """
 
 import numpy as np

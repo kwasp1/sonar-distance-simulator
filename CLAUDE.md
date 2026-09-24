@@ -12,9 +12,11 @@ convert it to a distance estimate. Study how noise (SNR) and pulse
 bandwidth affect estimation accuracy.
 
 This is **not a hardware project**. No microcontroller, no physical sensor.
-Everything is numpy arrays. The only possible hardware touchpoint is an
-OPTIONAL stretch goal: an acoustic validation test using a laptop's own
-speaker + mic — not required, not core scope.
+Everything is numpy arrays. The one hardware touchpoint is the acoustic
+validation stretch goal — a laptop's own speaker + mic — which is now
+**implemented and validated** (`src/acoustic.py`, captured with
+`physical_sonar_check/record_acoustic.py`). Two real detections confirm it:
+a wall at 1.797 m and a hand at 0.272 m, both above 6 sigma.
 
 ## Non-negotiable architecture rule
 
@@ -50,9 +52,19 @@ core logic instead of just writing a new thin display file.
 | 3. Matched filter | `src/receiver.py` | `matched_filter()` |
 | 4. Distance estimate | `src/receiver.py` | `estimate_distance()` |
 | Optional filtering | `src/filters.py` | `bandpass_filter()` |
-| 5. Evaluation sweeps | `src/evaluate.py` | `run_snr_sweep()` |
+| 5. Evaluation sweeps | `src/evaluate.py` | `run_snr_sweep()`, `run_bandwidth_resolution_sweep()` |
+| Playback | `src/audio.py` | `make_audible()`, `audible_echo()`, `to_wav_bytes()` |
+| Real acoustic ranging | `src/acoustic.py` | `analyse_recording()`, `design_chirp()` |
 | Display (notebook) | `notebooks/` | calls `src/` functions, does the plotting |
-| Display (webapp, LAST) | `app/streamlit_app.py` | thin wrapper, calls `src/` functions only |
+| Display (webapp) | `app/streamlit_app.py` | **owned by Farhan — do not edit** |
+
+`src/audio.py` and `src/acoustic.py` follow the same rule: they return arrays
+and `.wav` bytes, and never play, record, plot or print. Recording audio
+happens only in `physical_sonar_check/record_acoustic.py`.
+
+`app/streamlit_app.py` imports ten functions from `src/`. Keep those
+signatures stable; add new functions rather than reshaping existing ones, and
+flag it if a breaking change is genuinely needed.
 
 Function signatures/docstrings are already stubbed in each file — implement
 against those contracts rather than changing them, so notebook/app code
@@ -71,10 +83,23 @@ that calls them doesn't break.
 
 ## Testing approach
 
-Week 1 priority: `tests/test_pipeline.py` — noiseless, no-attenuation case
-must recover the exact true distance before any noise/filtering work starts.
-Get this green first; everything else builds on top of a known-correct
-delay/distance pipeline.
+29 pytest cases plus 17 checks in `check_pulse.py`. Run with
+`python -m pytest -q` and `python check_pulse.py`.
+
+| File | Gates |
+|---|---|
+| `tests/test_pipeline.py` | Noiseless exact-delay recovery, 4 delays x 3 pulse types |
+| `tests/test_multipath.py` | Two objects detected, one object not split |
+| `tests/test_resolution.py` | Resolution improves as bandwidth grows |
+| `tests/test_audio.py` | Playback shape, loudness, loop-safety, gain reuse |
+| `tests/test_acoustic.py` | Re-derives an archived real recording bit-exactly |
+
+`tests/test_acoustic.py` reads `physical_sonar_check/rx.npy`,
+`baseline.npy` and `excess.npy`. Do not delete those three.
+
+`src/filters.py` currently has no pytest coverage — the one gap. If you touch
+it, be aware that swapping `filtfilt` for `lfilter` would silently shift every
+distance estimate by the filter's group delay and nothing would catch it.
 
 ## Explicitly out of scope
 
@@ -82,18 +107,31 @@ No ROS2, no MAVLink, no embedded/microcontroller code, no GPIO/serial
 hardware calls anywhere in this repo. If a suggestion involves any of
 those, it's out of scope for this project — flag it rather than adding it.
 
-## Timeline (4-week plan, targeting 3-4 weeks)
+## Status
 
-| Week | Focus |
-|---|---|
-| 1 | `pulse.py` + `channel.py`, noiseless sanity test passing |
-| 2 | `receiver.py` matched filter, AWGN, SNR sweep + RMSE plot |
-| 3 | `filters.py` band-pass, bandwidth/resolution study |
-| 4 | Evaluation, report, demo — `app/streamlit_app.py` only if ahead of schedule |
+**All nine committed features are implemented and tested.** What remains is
+report production: figures into `results/`, then the write-up.
 
-## Team ownership (primary, not exclusive)
+| Week | Planned | Actual |
+|---|---|---|
+| 1 | `pulse.py` + `channel.py`, noiseless test | done |
+| 2 | `receiver.py`, AWGN, SNR sweep | done |
+| 3 | `filters.py`, bandwidth/resolution study | done |
+| 4 | Evaluation, report, demo | code done; report outstanding |
 
-- **Aditya (2305178)**: `src/pulse.py`, `src/receiver.py`, bandwidth/resolution analysis
-- **Teammate**: `src/channel.py`, `src/filters.py`, `src/evaluate.py`, report compilation
+Two things landed beyond the original plan: `src/audio.py` (makes any signal
+listenable) and `src/acoustic.py` (real speaker/microphone ranging, validated
+against a wall at 1.797 m and a hand at 0.272 m).
 
-Both: integration testing, final evaluation sweep, report/presentation.
+## Team ownership
+
+- **Aditya (2305178)**: all of `src/`, `tests/`, evaluation sweeps, acoustic
+  validation
+- **Farhan (2305177)**: `app/streamlit_app.py`
+
+Both: report and presentation.
+
+**`app/streamlit_app.py` is Farhan's file — do not edit it.** It imports ten
+functions from `src/`, so keep those signatures stable; add new functions
+rather than reshaping existing ones, and flag it if a breaking change is
+genuinely needed. `TEAMMATE_GUIDE.md` is the API reference written for him.

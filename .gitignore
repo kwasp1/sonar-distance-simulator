@@ -4,3 +4,10 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .DS_Store
+
+# Generated audio and captures -- the app renders these live from whatever
+# parameters are set, so committing stale copies only invites confusion.
+results/*.wav
+physical_sonar_check/*_rx.npy
+physical_sonar_check/*_baseline.npy
+physical_sonar_check/*_excess.npy
