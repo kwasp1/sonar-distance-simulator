@@ -56,17 +56,14 @@ sonar-distance-simulator/
 │   ├── test_audio.py             # Playback shape, loudness, loop-safety
 │   └── test_acoustic.py          # Re-derives an archived real recording exactly
 ├── check_pulse.py                # 17 automated checks for pulse math & stability
-├── check_multipath.py            # Exploration script for multi-target resolution limits
 ├── app/                          # Streamlit interactive web application
 │   └── streamlit_app.py          # OWNED BY FARHAN -- do not edit
 ├── notebooks/                    # Jupyter notebooks for report plots
 ├── physical_sonar_check/         # Real acoustic capture (Mac/PC mic + speaker)
 │   ├── record_acoustic.py        # The only file that touches speaker/mic
 │   ├── band_check.py             # Measures speaker/mic frequency response
-│   ├── sonar_detect.py           # Real-time ultrasonic target detector
-│   ├── sonar_live.py             # Moving-target indication (MTI) display
-│   ├── sonar_probe_v*.py         # Physical acoustic chirp echo ranging
-│   └── view.py                   # Plotting helper for recorded numpy traces
+│   ├── band_check.py             # Measures your speaker/mic frequency response
+│   └── *.npy                     # Archived recordings the acoustic tests read
 └── requirements.txt              # Project dependencies (numpy, scipy, matplotlib, pytest)
 ```
 
@@ -169,18 +166,17 @@ The same ranging maths applied to audio actually recorded in a room.
 - **`tests/test_pipeline.py`**: Runs Pytest across multiple sample delays to verify that in a noiseless channel, the receiver recovers the exact true distance.
 - **`tests/test_multipath.py`**: Asserts that two separate objects (at 5.0 m and 6.0 m) are both detected within 1 cm accuracy, and that a single object is never falsely split.
 - **`check_pulse.py`**: 17 comprehensive automated assertions checking pulse duration, unit energy, Gaussian centroid symmetry, theoretical bandwidth formulas, and sampling-rate stability.
-- **`check_multipath.py`**: Tests resolution limits by gradually bringing two reflectors closer (50 cm down to 1 cm) and measuring false-split rates across SNR.
 
 ---
 
 ## 6. Physical Sonar Check (`physical_sonar_check/`)
 *Optional stretch goal / real-world acoustic experimentation:*
 
-- **`band_check.py`**: Plays a chirp and measures actual hardware speaker and microphone response on your machine.
-- **`sonar_detect.py`**: Real-time ultrasonic rangefinder (15–21 kHz) with MTI clutter cancellation and distance threshold detection.
-- **`sonar_live.py`**: Continuous MTI radar display; filters static background reflections (desk, walls) and tracks moving hands.
-- **`sonar_probe_v1` – `v4.py`**: Acoustic chirp echo ranging. v4 records an open-space baseline to subtract chassis/speaker ringdown, isolating wall echoes.
-- **`view.py`**: Quick plotting tool to visualize saved `.npy` traces (`rx.npy`, `corr.npy`, `excess.npy`).
+- **`record_acoustic.py`**: The capture script. Records a baseline facing open space, then measures against it. All maths is delegated to `src/acoustic.py`; this file only does audio I/O.
+- **`band_check.py`**: Plays a slow sweep and measures your machine's actual speaker and microphone response. Run this first if you change the chirp band.
+- **`rx.npy`, `baseline.npy`, `excess.npy`**: Archived capture of a wall at 1.797 m. `tests/test_acoustic.py` re-derives `excess.npy` from `rx.npy` exactly, so do not delete these.
+
+The exploratory probe scripts (`sonar_probe_v1`–`v4`, `sonar_detect`, `sonar_live`, `view.py`) were removed once `record_acoustic.py` superseded them; they remain in git history.
 
 ---
 
@@ -217,7 +213,6 @@ fixes a negative `low_hz`; a **lower** `freq_hz` fixes a `high_hz` past Nyquist.
 | [`src/audio.py`](src/audio.py) | Makes any pulse or received buffer listenable | NumPy arrays / .wav bytes |
 | [`src/acoustic.py`](src/acoustic.py) | Ranging on real speaker/microphone recordings | Distance (m), quality (sigma) |
 | [`check_pulse.py`](check_pulse.py) | 17 pass/fail checks on pulse generator physics | Console test report |
-| [`check_multipath.py`](check_multipath.py) | Multi-target resolution & false-positive exploration | Console table |
 | [`tests/`](tests/) | Pytest test suite for noiseless recovery & multi-object detection | Pytest pass/fail |
 | [`app/streamlit_app.py`](app/streamlit_app.py) | Interactive web application — **owned by Farhan, do not edit** | Streamlit web UI |
 | [`physical_sonar_check/`](physical_sonar_check/) | Experimental real laptop mic/speaker acoustic sonar | Real-time audio I/O & Matplotlib |

@@ -20,8 +20,9 @@ pip install -r requirements.txt
 `requirements.txt` if you just want the simulation and the tests.
 
 ```bash
-python -m pytest -q        # 29 tests
-python check_pulse.py      # 17 pulse-maths checks
+python -m pytest -q                    # 29 tests
+python check_pulse.py                  # 17 pulse-maths checks
+python notebooks/make_figures.py       # regenerates every report figure
 ```
 
 ## Structure
