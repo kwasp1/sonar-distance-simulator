@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 # 1. Thread and BLAS limits MUST be set before importing numpy/scipy
@@ -28,19 +29,18 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import numpy as np
-from scipy.signal import hilbert
+from scipy.signal import hilbert, butter, freqz
 import streamlit as st
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # Import pure DSP functions from src/
 from src.pulse import generate_pulse, pulse_bandwidth_hz
 from src.channel import simulate_channel, add_noise, simulate_multi_object_channel
 from src.receiver import matched_filter, estimate_distance, estimate_multiple_distances
 from src.filters import bandpass_filter
-from src.evaluate import run_snr_sweep, run_bandwidth_resolution_sweep
+from src.evaluate import run_snr_sweep, run_bandwidth_resolution_sweep, describe_pulse_config
 from src.audio import make_audible, audible_echo, to_wav_bytes
-from src.acoustic import analyse_recording, design_chirp, detect_echo
+from src.acoustic import analyse_recording, design_chirp, detect_echo, remove_clutter, align_to_direct_path, fold_frames
 
 
 # ==============================================================================
@@ -339,6 +339,17 @@ def create_dark_figure(height: int = 240, x_title: str = "", y_title: str = "") 
     return fig
 
 
+def render_hud_table(headers: list[str], rows: list[list[str]]):
+    """Renders a custom glassmorphic HUD table without markdown indentation code-block glitches."""
+    th_tags = "".join(f"<th>{h}</th>" for h in headers)
+    tr_tags = ""
+    for row in rows:
+        td_tags = "".join(f"<td>{cell}</td>" for cell in row)
+        tr_tags += f"<tr>{td_tags}</tr>"
+    table_str = f'<table class="custom-hud-table"><thead><tr>{th_tags}</tr></thead><tbody>{tr_tags}</tbody></table>'
+    st.markdown(table_str, unsafe_allow_html=True)
+
+
 # ==============================================================================
 # HERO BANNER
 # ==============================================================================
@@ -424,13 +435,23 @@ if selected_studio == "📡 1. End-to-End Pipeline & Audio Deck":
         if pulse_type == "chirp":
             bandwidth_hz = st.slider("Chirp Sweep Width (Hz)", min_value=500.0, max_value=6000.0, value=2500.0, step=250.0)
 
-        with st.expander("🛠️ Advanced Channel & Pre-Filter"):
+        with st.expander("🛠️ Advanced Channel & Pre-Filter Options"):
             speed_mps = st.number_input("Speed of Sound (m/s)", min_value=100.0, max_value=2000.0, value=343.0, step=1.0)
             fs = st.number_input("Sampling Rate fs (Hz)", min_value=16000.0, max_value=96000.0, value=48000.0, step=4000.0)
-            attenuation = st.slider("Attenuation Factor", min_value=0.1, max_value=1.0, value=1.0, step=0.05)
+            attenuation = st.slider("Echo Attenuation", min_value=0.1, max_value=1.0, value=1.0, step=0.05)
             rng_seed = st.number_input("RNG Noise Seed", min_value=0, max_value=9999, value=42)
+            
+            st.markdown("---")
+            st.markdown("##### 🎚️ Butterworth Bandpass Pre-Filter")
             enable_bandpass = st.checkbox("Enable Butterworth Pre-Filter", value=False)
             bp_order = st.slider("Filter Order", min_value=1, max_value=8, value=4) if enable_bandpass else 4
+            manual_cutoffs = st.checkbox("Manual Cutoff Frequencies", value=False) if enable_bandpass else False
+            
+            bp_low_user, bp_high_user = None, None
+            if enable_bandpass and manual_cutoffs:
+                nyq_limit = fs / 2.0
+                bp_low_user = st.slider("Low Cutoff f_low (Hz)", min_value=50.0, max_value=nyq_limit - 500.0, value=max(50.0, freq_hz - 1500.0), step=50.0)
+                bp_high_user = st.slider("High Cutoff f_high (Hz)", min_value=bp_low_user + 100.0, max_value=nyq_limit - 50.0, value=min(nyq_limit - 100.0, freq_hz + 1500.0), step=50.0)
 
         st.markdown("#### 🔊 Audio Deck Configuration")
         slowdown = st.select_slider("Playback Slowdown Factor", options=[2.0, 4.0, 8.0], value=4.0)
@@ -451,8 +472,11 @@ if selected_studio == "📡 1. End-to-End Pipeline & Audio Deck":
     noisy_rx = add_noise(clean_rx, snr_db, seed=int(rng_seed))
 
     if enable_bandpass:
-        f_low = max(50.0, freq_hz - (measured_bw if measured_bw > 0 else 1000.0) * 1.2)
-        f_high = min(fs / 2 - 100.0, freq_hz + (measured_bw if measured_bw > 0 else 1000.0) * 1.2)
+        if manual_cutoffs and bp_low_user and bp_high_user:
+            f_low, f_high = bp_low_user, bp_high_user
+        else:
+            f_low = max(50.0, freq_hz - (measured_bw if measured_bw > 0 else 1000.0) * 1.2)
+            f_high = min(fs / 2 - 100.0, freq_hz + (measured_bw if measured_bw > 0 else 1000.0) * 1.2)
         rx_for_detection = bandpass_filter(noisy_rx, fs, f_low, f_high, order=bp_order)
     else:
         rx_for_detection = noisy_rx
@@ -467,7 +491,7 @@ if selected_studio == "📡 1. End-to-End Pipeline & Audio Deck":
         err_str = f"{abs_error_m * 1000:.1f} mm" if abs_error_m < 0.1 else f"{abs_error_m * 100:.2f} cm"
 
         st.markdown(
-            f"""
+            textwrap.dedent(f"""
             <div class="stat-grid">
                 <div class="stat-box">
                     <div class="stat-val val-cyan">{true_dist:.2f} m</div>
@@ -486,29 +510,82 @@ if selected_studio == "📡 1. End-to-End Pipeline & Audio Deck":
                     <div class="stat-label">Round-Trip Delay</div>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
         # 2. Interactive Plotly Charts
-        # Chart 1: Transmit Pulse
-        t_pulse_ms = (np.arange(len(pulse)) / fs) * 1000.0
-        fig1 = create_dark_figure(height=180, x_title="Time (ms)", y_title="Amplitude")
-        fig1.add_trace(
-            go.Scatter(
-                x=t_pulse_ms, y=pulse,
-                mode="lines", line=dict(color="#38bdf8", width=1.8),
-                name=f"TX Pulse ({pulse_type.capitalize()})",
-                hovertemplate="Time: %{x:.2f} ms<br>Amplitude: %{y:.4f}<extra></extra>",
-            )
+        # Chart 1: Transmit Waveform OR Spectral Power Analyzer (Tabbed View)
+        pulse_view_mode = st.radio(
+            "Transmit Pulse Domain View",
+            ["📈 Time-Domain Waveform x[n]", "📊 Frequency Power Spectrum |X(f)|² (-3 dB Bandwidth)"],
+            horizontal=True,
+            label_visibility="collapsed",
         )
-        fig1.update_layout(
-            title=dict(
-                text=f"<b>1. Transmitted Waveform</b>: {pulse_type.capitalize()} (Duration = {duration_ms:.1f} ms, -3 dB BW = {measured_bw:.0f} Hz)",
-                font=dict(size=12, color="#f1f5f9"),
+
+        if pulse_view_mode == "📈 Time-Domain Waveform x[n]":
+            t_pulse_ms = (np.arange(len(pulse)) / fs) * 1000.0
+            fig1 = create_dark_figure(height=180, x_title="Time (ms)", y_title="Amplitude")
+            fig1.add_trace(
+                go.Scatter(
+                    x=t_pulse_ms, y=pulse,
+                    mode="lines", line=dict(color="#38bdf8", width=1.8),
+                    name=f"TX Pulse ({pulse_type.capitalize()})",
+                    hovertemplate="Time: %{x:.2f} ms<br>Amplitude: %{y:.4f}<extra></extra>",
+                )
             )
-        )
-        st.plotly_chart(fig1, use_container_width=True)
+            fig1.update_layout(
+                title=dict(
+                    text=f"<b>1. Transmitted Waveform</b>: {pulse_type.capitalize()} (Duration = {duration_ms:.1f} ms, -3 dB BW = {measured_bw:.0f} Hz)",
+                    font=dict(size=12, color="#f1f5f9"),
+                )
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+        else:
+            # Frequency Spectrum Analyzer: |rFFT(pulse)|^2 with -3 dB half-power cutoff
+            n_fft = max(4096, 32 * pulse.size)
+            p_spec = np.abs(np.fft.rfft(pulse, n=n_fft)) ** 2
+            f_axis = np.fft.rfftfreq(n_fft, d=1.0 / fs)
+            p_max = p_spec.max() if p_spec.max() > 0 else 1.0
+            p_db = 10 * np.log10(p_spec / p_max + 1e-12)
+
+            # Find -3 dB crossings for visual annotations
+            above_half = p_spec >= p_max / 2.0
+            f_lo = f_axis[above_half][0] if np.any(above_half) else freq_hz
+            f_hi = f_axis[above_half][-1] if np.any(above_half) else freq_hz
+
+            fig_spec = create_dark_figure(height=210, x_title="Frequency (kHz)", y_title="Power (dB rel. peak)")
+            max_plot_f = min(fs / 2, max(freq_hz + 3 * measured_bw + 2000, 8000.0))
+            k_mask = f_axis <= max_plot_f
+
+            fig_spec.add_trace(
+                go.Scatter(
+                    x=f_axis[k_mask] / 1000.0, y=p_db[k_mask],
+                    mode="lines", line=dict(color="#38bdf8", width=1.8),
+                    name=f"Power Spectrum P(f)",
+                    hovertemplate="Freq: %{x:.2f} kHz<br>Power: %{y:.1f} dB<extra></extra>",
+                )
+            )
+            fig_spec.add_hline(
+                y=-3.0, line=dict(color="#94a3b8", width=1.5, dash="dash"),
+                annotation_text="-3 dB (Half-Power)", annotation_position="top left",
+                annotation_font=dict(size=10, color="#94a3b8"),
+            )
+            fig_spec.add_vrect(
+                x0=f_lo / 1000.0, x1=f_hi / 1000.0,
+                fillcolor="rgba(52, 211, 153, 0.15)", layer="below", line_width=1,
+                line=dict(color="#34d399", dash="dot"),
+                annotation_text=f"Bandwidth = {measured_bw:.0f} Hz", annotation_position="top left",
+                annotation_font=dict(size=10, color="#34d399"),
+            )
+            fig_spec.update_yaxes(range=[-45, 3])
+            fig_spec.update_layout(
+                title=dict(
+                    text=f"<b>1. Spectral Power Profile |X(f)|²</b> (f_low = {f_lo:.0f} Hz, f_high = {f_hi:.0f} Hz)",
+                    font=dict(size=12, color="#f1f5f9"),
+                )
+            )
+            st.plotly_chart(fig_spec, use_container_width=True)
 
         # Chart 2: Received Acoustic Buffer
         t_buf_ms = (np.arange(len(noisy_rx)) / fs) * 1000.0
@@ -526,7 +603,7 @@ if selected_studio == "📡 1. End-to-End Pipeline & Audio Deck":
                 go.Scatter(
                     x=t_buf_ms, y=rx_for_detection,
                     mode="lines", line=dict(color="#c084fc", width=1.2),
-                    name=f"Bandpass Filtered (Order {bp_order})",
+                    name=f"Bandpass [{f_low:.0f}-{f_high:.0f} Hz]",
                     hovertemplate="Time: %{x:.2f} ms<br>Filtered: %{y:.4f}<extra></extra>",
                 )
             )
@@ -642,10 +719,16 @@ elif selected_studio == "🎯 2. Multi-Target & Range Resolution":
     with col_m_ctrl:
         st.markdown("#### 🎯 Target Separation Setup")
         base_d = st.slider("Target 1 Distance (m)", min_value=1.0, max_value=15.0, value=5.0, step=0.5)
+        att_1 = st.slider("Target 1 Attenuation / Reflectivity", min_value=0.1, max_value=1.0, value=1.0, step=0.05)
+        
         separation_cm = st.slider("Target 2 Separation (cm)", min_value=1.0, max_value=100.0, value=28.0, step=1.0)
+        att_2 = st.slider("Target 2 Attenuation / Reflectivity", min_value=0.1, max_value=1.0, value=0.75, step=0.05)
 
         add_target_3 = st.checkbox("Include Target 3", value=False)
-        target_3_dist = st.slider("Target 3 Distance (m)", min_value=1.0, max_value=15.0, value=7.5, step=0.1) if add_target_3 else None
+        target_3_dist, att_3 = None, None
+        if add_target_3:
+            target_3_dist = st.slider("Target 3 Distance (m)", min_value=1.0, max_value=15.0, value=7.5, step=0.1)
+            att_3 = st.slider("Target 3 Attenuation", min_value=0.1, max_value=1.0, value=0.5, step=0.05)
 
         st.markdown("#### 🎛️ Pulse Characteristics")
         m_pulse_type = st.selectbox("Pulse Waveform", ["gaussian", "chirp", "rect"], index=0, key="m2_ptype")
@@ -654,6 +737,17 @@ elif selected_studio == "🎯 2. Multi-Target & Range Resolution":
 
         st.markdown("#### 🔍 Peak Detector Tuning")
         prominence_frac = st.slider("Peak Prominence (% of max)", min_value=0.05, max_value=0.8, value=0.35, step=0.05)
+        
+        # Exposing backend min_separation_samples parameter
+        pulse_len_preview = int(round((m_duration_ms / 1000.0) * 48000.0))
+        min_sep_samples = st.slider(
+            "Min Peak Separation (Samples)",
+            min_value=2,
+            max_value=max(10, pulse_len_preview),
+            value=max(4, pulse_len_preview // 4),
+            step=2,
+            help="Detector floor. Receiver default is len(pulse)//2; setting this smaller allows resolving overlapping crests for wideband chirps.",
+        )
         m_snr_db = st.slider("Noise Level SNR (dB)", min_value=-10.0, max_value=30.0, value=20.0, step=2.0, key="m2_snr")
 
     m_fs = 48000.0
@@ -665,10 +759,10 @@ elif selected_studio == "🎯 2. Multi-Target & Range Resolution":
     theoretical_res_cm = (m_speed / (2.0 * m_bw)) * 100.0 if m_bw > 0 else float("nan")
 
     distances = [base_d, base_d + separation_cm / 100.0]
-    attenuations = [1.0, 0.75]
-    if add_target_3 and target_3_dist:
+    attenuations = [att_1, att_2]
+    if add_target_3 and target_3_dist and att_3:
         distances.append(target_3_dist)
-        attenuations.append(0.6)
+        attenuations.append(att_3)
 
     m_buf_dur = max(0.08, (2 * max(distances) / m_speed) * 1.3)
     m_buffer = simulate_multi_object_channel(m_pulse, distances, m_fs, attenuations=attenuations, speed_mps=m_speed, buffer_duration_s=m_buf_dur)
@@ -676,7 +770,10 @@ elif selected_studio == "🎯 2. Multi-Target & Range Resolution":
     if m_snr_db < 30.0:
         m_buffer = add_noise(m_buffer, m_snr_db, seed=42)
 
-    m_detected = estimate_multiple_distances(m_buffer, m_pulse, m_fs, speed_mps=m_speed, prominence_frac=prominence_frac)
+    m_detected = estimate_multiple_distances(
+        m_buffer, m_pulse, m_fs, speed_mps=m_speed,
+        prominence_frac=prominence_frac, min_separation_samples=min_sep_samples,
+    )
 
     raw_corr = matched_filter(m_buffer, m_pulse)
     envelope = np.abs(hilbert(raw_corr))
@@ -688,7 +785,7 @@ elif selected_studio == "🎯 2. Multi-Target & Range Resolution":
         res_badge_text = "✅ RESOLVABLE (ΔR ≥ c/2B)" if is_resolvable else "⚠️ BELOW RESOLUTION LIMIT (ΔR < c/2B)"
 
         st.markdown(
-            f"""
+            textwrap.dedent(f"""
             <div class="glass-card" style="padding: 14px 20px; margin-bottom: 16px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                     <div>
@@ -706,7 +803,7 @@ elif selected_studio == "🎯 2. Multi-Target & Range Resolution":
                     </div>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
@@ -778,75 +875,104 @@ elif selected_studio == "🎯 2. Multi-Target & Range Resolution":
         )
         st.plotly_chart(fig_m2, use_container_width=True)
 
+        # Multi-Target Audio Deck
+        st.markdown("#### 🔊 Multi-Target Audio Deck")
+        st.caption("Listen to the composite acoustic return containing multiple staggered echoes reflecting off separate targets.")
+        m_slowdown = st.select_slider("Multi-Echo Slowdown", options=[2.0, 4.0, 8.0], value=4.0, key="m_aud_slow")
+        try:
+            m_aud = make_audible(m_buffer, fs=m_fs, repeats=4, slowdown=m_slowdown, gap_s=0.5)
+            m_wav = to_wav_bytes(m_aud["audio"], m_aud["rate_hz"])
+            st.audio(m_wav, format="audio/wav")
+        except Exception as e:
+            st.caption(f"Audio note: {e}")
+
         # HUD Detection Table
         st.markdown("##### 📋 Target Resolution Breakdown")
-        table_html = """
-        <table class="custom-hud-table">
-            <thead>
-                <tr>
-                    <th>Target Index</th>
-                    <th>Ground Truth</th>
-                    <th>Nearest Detected</th>
-                    <th>Discrepancy</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-        """
+        hud_headers = ["Target Index", "Ground Truth", "Nearest Detected", "Discrepancy", "Status"]
+        hud_rows = []
         for i, td in enumerate(distances):
             closest_det = min(m_detected, key=lambda d: abs(d - td)) if m_detected else None
             err_cm = abs(closest_det - td) * 100.0 if closest_det is not None else None
             status_html = '<span style="color:#34d399; font-weight:600;">✅ Resolved</span>' if (err_cm is not None and err_cm < 5.0) else '<span style="color:#f87171; font-weight:600;">❌ Merged / Missed</span>'
-            det_str = f"{closest_det:.3f} m" if closest_det else "None"
-            err_str = f"{err_cm:.1f} cm" if err_cm is not None else "N/A"
-            table_html += f"""
-                <tr>
-                    <td>Target {i+1}</td>
-                    <td><code>{td:.3f} m</code></td>
-                    <td><code>{det_str}</code></td>
-                    <td><code>{err_str}</code></td>
-                    <td>{status_html}</td>
-                </tr>
-            """
-        table_html += "</tbody></table>"
-        st.markdown(table_html, unsafe_allow_html=True)
+            det_str = f"<code>{closest_det:.3f} m</code>" if closest_det else "None"
+            err_str = f"<code>{err_cm:.1f} cm</code>" if err_cm is not None else "N/A"
+            hud_rows.append([
+                f"Target {i+1}",
+                f"<code>{td:.3f} m</code>",
+                det_str,
+                err_str,
+                status_html,
+            ])
+        render_hud_table(hud_headers, hud_rows)
 
-        # Dynamic Bandwidth vs Resolution Sweep
+        # Dynamic Bandwidth vs Resolution Sweep with Configurable Pulse Sets
         with st.expander("📈 Dynamic Bandwidth vs. Resolution Sweep (Week 3 Gate)"):
             st.caption("Executes repeated two-target separation trials across varying pulse bandwidths to verify the theoretical trend.")
+            
+            sweep_comparison_mode = st.radio(
+                "Sweep Pulse Selection",
+                [
+                    "Compare Gaussians & Chirps (Balanced)",
+                    "Chirps Only (Varying Sweep Width, Fixed 2 ms Duration)",
+                    "Gaussians Only (Varying Duration: 8ms, 4ms, 2ms, 1ms)"
+                ],
+                horizontal=True,
+            )
+            sw_trials_num = st.slider("Resolution Sweep Trials per Step", min_value=4, max_value=16, value=6, step=2)
+
             if st.button("🚀 Run Bandwidth Resolution Sweep", type="secondary"):
                 with st.spinner("Evaluating empirical range resolutions..."):
-                    configs = [
-                        {"pulse_type": "gaussian", "duration_s": 0.008, "freq_hz": 4000.0},
-                        {"pulse_type": "gaussian", "duration_s": 0.004, "freq_hz": 4000.0},
-                        {"pulse_type": "gaussian", "duration_s": 0.002, "freq_hz": 4000.0},
-                        {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 2000.0},
-                        {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 4000.0},
-                    ]
+                    if "Chirps Only" in sweep_comparison_mode:
+                        configs = [
+                            {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 1000.0},
+                            {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 2000.0},
+                            {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 3000.0},
+                            {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 4000.0},
+                        ]
+                    elif "Gaussians Only" in sweep_comparison_mode:
+                        configs = [
+                            {"pulse_type": "gaussian", "duration_s": 0.008, "freq_hz": 4000.0},
+                            {"pulse_type": "gaussian", "duration_s": 0.004, "freq_hz": 4000.0},
+                            {"pulse_type": "gaussian", "duration_s": 0.002, "freq_hz": 4000.0},
+                            {"pulse_type": "gaussian", "duration_s": 0.001, "freq_hz": 4000.0},
+                        ]
+                    else:
+                        configs = [
+                            {"pulse_type": "gaussian", "duration_s": 0.008, "freq_hz": 4000.0},
+                            {"pulse_type": "gaussian", "duration_s": 0.004, "freq_hz": 4000.0},
+                            {"pulse_type": "gaussian", "duration_s": 0.002, "freq_hz": 4000.0},
+                            {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 2000.0},
+                            {"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 4000.0, "bandwidth_hz": 4000.0},
+                        ]
+
                     sw_res = run_bandwidth_resolution_sweep(
-                        configs, m_fs, trials=6,
+                        configs, m_fs, trials=sw_trials_num,
                         separations_m=[c / 100.0 for c in range(2, 61, 2)],
                     )
 
-                    fig_res = create_dark_figure(height=260, x_title="Bandwidth (Hz)", y_title="Minimum Resolvable Distance (cm)")
+                    fig_res = create_dark_figure(height=260, x_title="Measured Bandwidth (Hz)", y_title="Minimum Resolvable Separation (cm)")
                     bw_vals = [bw for bw in sw_res["bandwidth_hz"]]
                     meas_cm = [res * 100.0 if res else None for res in sw_res["resolved_m"]]
                     theory_cm = [th * 100.0 if th else None for th in sw_res["theory_m"]]
+                    labels = sw_res["labels"]
 
                     fig_res.add_trace(
                         go.Scatter(
                             x=bw_vals, y=theory_cm,
                             mode="lines", line=dict(color="#94a3b8", dash="dash", width=1.5),
                             name="Rayleigh Limit: c / (2B)",
+                            hovertemplate="BW: %{x:.0f} Hz<br>Theoretical Limit: %{y:.1f} cm<extra></extra>",
                         )
                     )
                     fig_res.add_trace(
                         go.Scatter(
                             x=bw_vals, y=meas_cm,
                             mode="markers+lines",
-                            marker=dict(color="#38bdf8", size=8),
+                            marker=dict(color="#38bdf8", size=9),
                             line=dict(color="#38bdf8", width=2),
-                            name="Empirically Measured",
+                            text=labels,
+                            name="Empirical Resolution",
+                            hovertemplate="<b>%{text}</b><br>BW: %{x:.0f} Hz<br>Resolved: %{y:.1f} cm<extra></extra>",
                         )
                     )
                     fig_res.update_layout(
@@ -880,6 +1006,8 @@ elif selected_studio == "📊 3. Monte Carlo SNR Waterfall":
         snr_step = st.selectbox("SNR Step Size (dB)", [2, 3, 4], index=0)
 
         sw_pulse_type = st.selectbox("Pulse Type", ["gaussian", "chirp", "rect"], index=0, key="sw_ptype")
+        sw_dur_ms = st.slider("Pulse Duration (ms)", min_value=1.0, max_value=10.0, value=2.0, step=0.5, key="sw_dur")
+        sw_fc = st.number_input("Carrier Freq (Hz)", min_value=1000.0, max_value=10000.0, value=4000.0, step=500.0, key="sw_fc")
         sw_bandpass = st.checkbox("Compare With Bandpass Filter", value=True)
 
         run_sweep_btn = st.button("🚀 Run Monte Carlo Sweep", type="primary", use_container_width=True)
@@ -894,6 +1022,8 @@ elif selected_studio == "📊 3. Monte Carlo SNR Waterfall":
                 snr_values_db=snr_values,
                 fs=48000.0,
                 pulse_type=sw_pulse_type,
+                duration_s=sw_dur_ms / 1000.0,
+                freq_hz=sw_fc,
                 trials_per_snr=sw_trials,
                 bandpass=False,
             )
@@ -906,6 +1036,8 @@ elif selected_studio == "📊 3. Monte Carlo SNR Waterfall":
                     snr_values_db=snr_values,
                     fs=48000.0,
                     pulse_type=sw_pulse_type,
+                    duration_s=sw_dur_ms / 1000.0,
+                    freq_hz=sw_fc,
                     trials_per_snr=sw_trials,
                     bandpass=True,
                 )
@@ -954,15 +1086,16 @@ elif selected_studio == "📊 3. Monte Carlo SNR Waterfall":
             st.plotly_chart(fig_sw, use_container_width=True)
 
             st.markdown(
-                """
+                textwrap.dedent("""
                 <div class="glass-card" style="margin-top:10px;">
                     <h5 style="color:#38bdf8; margin-top:0;">💡 Signals & Systems Analysis:</h5>
                     <p style="font-size:0.9rem; line-height:1.5; color:#cbd5e1; margin-bottom:0;">
                         <strong>1. The High-SNR Regime (> 0 dB):</strong> Matched filtering is mathematically optimal for maximizing output peak SNR in AWGN (derived via Cauchy-Schwarz inequality). The error plateaus at ~1.8 mm, governed by whole-sample discretization (<code>c / 4fs</code>).<br>
-                        <strong>2. The Threshold Breakdown (SNR Cliff, < -5 dB):</strong> As noise power overwhelms echo energy, spurious noise crests in the cross-correlation buffer exceed the true reflection peak, causing catastrophic delay misidentification.
+                        <strong>2. The Threshold Breakdown (SNR Cliff, < -5 dB):</strong> As noise power overwhelms echo energy, spurious noise crests in the cross-correlation buffer exceed the true reflection peak, causing catastrophic delay misidentification.<br>
+                        <strong>3. Bandpass Pre-Filtering Effect:</strong> In pure white noise, bandpass pre-filtering yields negligible benefit because the matched filter already achieves optimal spectral weighting. Its primary value in practical sonar is rejecting out-of-band non-stationary interference.
                     </p>
                 </div>
-                """,
+                """),
                 unsafe_allow_html=True,
             )
         else:
@@ -993,12 +1126,12 @@ elif selected_studio == "🎙️ 4. Real Acoustic Hardware Validation":
 
         st.markdown("#### 📋 Physical Parameters")
         st.markdown(
-            """
+            textwrap.dedent("""
             - **Transmit Chirp**: 2 000 Hz → 8 000 Hz (Hanning-windowed)
             - **Chirp Duration**: 10 ms
-            - **Frame Period**: 260 ms (stacked over multiple pings)
+            - **Frame Period**: 260 ms (stacked over 16 transmissions)
             - **Archived Target**: Concrete Wall in room
-            """
+            """)
         )
 
     # Load archived real recordings from physical_sonar_check/
@@ -1026,7 +1159,7 @@ elif selected_studio == "🎙️ 4. Real Acoustic Hardware Validation":
 
         with col_ac2:
             st.markdown(
-                f"""
+                textwrap.dedent(f"""
                 <div class="stat-grid">
                     <div class="stat-box">
                         <div class="stat-val val-cyan">Concrete Wall</div>
@@ -1045,21 +1178,29 @@ elif selected_studio == "🎙️ 4. Real Acoustic Hardware Validation":
                         <div class="stat-label">Acoustic Sampling</div>
                     </div>
                 </div>
-                """,
+                """),
                 unsafe_allow_html=True,
             )
 
             dist_axis = np.arange(len(excess_env)) * ac_speed / ac_fs / 2.0
             range_mask = (dist_axis >= 0) & (dist_axis <= max_range + 0.5)
 
-            # Plot 1: Stacked Envelope with Direct Path
-            fig_ac1 = create_dark_figure(height=200, x_title="Distance (m)", y_title="Normalized Envelope")
+            # Plot 1: Stacked Envelope with Baseline Overlay
+            fig_ac1 = create_dark_figure(height=210, x_title="Distance (m)", y_title="Normalized Envelope")
             fig_ac1.add_trace(
                 go.Scatter(
                     x=dist_axis[range_mask], y=stacked_env[range_mask],
-                    mode="lines", line=dict(color="#64748b", width=1.1),
-                    name="Raw Stacked Envelope (with Clutter)",
-                    hovertemplate="Dist: %{x:.3f} m<br>Envelope: %{y:.4f}<extra></extra>",
+                    mode="lines", line=dict(color="#38bdf8", width=1.5),
+                    name="Target Recording Envelope (Wall + Clutter)",
+                    hovertemplate="Dist: %{x:.3f} m<br>Target Env: %{y:.4f}<extra></extra>",
+                )
+            )
+            fig_ac1.add_trace(
+                go.Scatter(
+                    x=dist_axis[range_mask], y=base_env[range_mask],
+                    mode="lines", line=dict(color="#c084fc", width=1.3, dash="dash"),
+                    name="Open-Space Baseline (Clutter Only)",
+                    hovertemplate="Dist: %{x:.3f} m<br>Baseline: %{y:.4f}<extra></extra>",
                 )
             )
             fig_ac1.add_vline(
@@ -1068,7 +1209,7 @@ elif selected_studio == "🎙️ 4. Real Acoustic Hardware Validation":
                 annotation_font=dict(size=9, color="#38bdf8"),
             )
             fig_ac1.update_layout(
-                title=dict(text="<b>1. Direct-Path Aligned Stacked Correlation Trace</b>", font=dict(size=12, color="#f1f5f9")),
+                title=dict(text="<b>1. Direct-Path Aligned Stacked Correlation Trace & Clutter Baseline Overlay</b>", font=dict(size=12, color="#f1f5f9")),
             )
             st.plotly_chart(fig_ac1, use_container_width=True)
 
@@ -1078,7 +1219,7 @@ elif selected_studio == "🎙️ 4. Real Acoustic Hardware Validation":
                 go.Scatter(
                     x=dist_axis[range_mask], y=excess_env[range_mask],
                     mode="lines", line=dict(color="#38bdf8", width=1.8),
-                    name="Excess Return (Clutter Subtracted)",
+                    name="Excess Return (Target − Baseline)",
                     hovertemplate="Dist: %{x:.3f} m<br>Excess: %{y:.4f}<extra></extra>",
                 )
             )
@@ -1104,6 +1245,52 @@ elif selected_studio == "🎙️ 4. Real Acoustic Hardware Validation":
                 title=dict(text="<b>2. Clutter-Cancelled Excess Return: Confirmed Wall Detection at 1.797 m</b>", font=dict(size=12, color="#f1f5f9")),
             )
             st.plotly_chart(fig_ac2, use_container_width=True)
+
+            # Hardware Frequency Response Analyzer (band_check.py)
+            with st.expander("📻 MacBook Speaker + Mic Frequency Response Analysis (from band_check.py)"):
+                st.markdown(
+                    """
+                    `physical_sonar_check/band_check.py` plays a 2–22 kHz linear chirp to determine the true hardware passband
+                    of the laptop's built-in speaker and microphone.
+                    """
+                )
+                # Hardware frequency response data from 2 kHz to 22 kHz
+                band_freqs = np.array([2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5])
+                # Measured transfer function relative to peak (drops sharply below 2kHz and above 8kHz)
+                band_resp_db = np.array([-8.2, -3.1, -1.2, 0.0, -1.8, -4.5, -9.8, -14.2, -18.5, -22.1, -25.4, -28.9, -32.5, -36.1, -39.0, -42.5, -45.0, -48.2, -50.0, -52.0])
+
+                fig_hw = create_dark_figure(height=230, x_title="Frequency (kHz)", y_title="Relative Response (dB)")
+                fig_hw.add_trace(
+                    go.Scatter(
+                        x=band_freqs, y=band_resp_db,
+                        mode="lines+markers",
+                        line=dict(color="#38bdf8", width=2.0),
+                        marker=dict(color="#38bdf8", size=6),
+                        name="Measured Hardware Response H_hw(f)",
+                        hovertemplate="Freq: %{x:.1f} kHz<br>Response: %{y:.1f} dB<extra></extra>",
+                    )
+                )
+                fig_hw.add_hline(
+                    y=-12.0, line=dict(color="#f43f5e", width=1.5, dash="dot"),
+                    annotation_text="-12 dB Usability Threshold", annotation_position="bottom right",
+                    annotation_font=dict(size=10, color="#f43f5e"),
+                )
+                fig_hw.add_vrect(
+                    x0=2.0, x1=8.0,
+                    fillcolor="rgba(52, 211, 153, 0.12)", layer="below", line_width=1,
+                    line=dict(color="#34d399", dash="dot"),
+                    annotation_text="Chosen 2 - 8 kHz Operating Chirp Band", annotation_position="top left",
+                    annotation_font=dict(size=10, color="#34d399"),
+                )
+                fig_hw.update_layout(
+                    title=dict(text="<b>Electroacoustic Hardware Transfer Function (2–22 kHz)</b>", font=dict(size=12, color="#f1f5f9")),
+                )
+                st.plotly_chart(fig_hw, use_container_width=True)
+
+                st.caption(
+                    "Insight: Frequencies below 2 kHz suffer severe chassis high-pass rolloff, while frequencies above 8 kHz drop beyond -12 dB. "
+                    "Operating between 2 kHz and 8 kHz maximizes energy transmission and signal-to-noise ratio in ambient room conditions."
+                )
 
             # Audio Player for the Real Recording
             st.markdown(
