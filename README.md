@@ -7,6 +7,8 @@ Pulse-echo ranging simulator: matched filtering / cross-correlation based
 delay estimation, evaluated under additive noise and pulse-bandwidth variation.
 
 Full spec: see `docs/Sonar_Distance_Simulator_Documentation.docx`.
+- **Physical Hardware Testing**: see [`PHYSICAL_TEST_GUIDE.md`](PHYSICAL_TEST_GUIDE.md)
+- **Teammate Guide**: see [`TEAMMATE_GUIDE.md`](TEAMMATE_GUIDE.md)
 
 ## Setup
 
