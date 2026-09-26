@@ -614,6 +614,56 @@ def render_hud_table(headers: list[str], rows: list[list[str]]):
     st.markdown(table_str, unsafe_allow_html=True)
 
 
+def record_live_acoustic(
+    chirp: np.ndarray,
+    repeats: int = 16,
+    fs: float = 48000.0,
+    amplitude: float = 0.4,
+    gap_s: float = 0.250,
+) -> np.ndarray:
+    """Plays chirp sequence through system speakers and records via microphone simultaneously."""
+    import sounddevice as sd
+
+    frame_samples = int(round((len(chirp) / fs + gap_s) * fs))
+    frame = np.zeros(frame_samples)
+    frame[: chirp.size] = amplitude * chirp
+    transmit = np.concatenate([np.tile(frame, repeats), np.zeros(frame_samples)])
+    stereo = np.zeros((transmit.size, 2))
+    stereo[:, 1] = transmit
+    recording = sd.playrec(stereo, samplerate=int(fs), channels=1, blocking=True)[:, 0]
+    return recording
+
+
+def run_live_band_check(fs: float = 48000.0) -> tuple[np.ndarray, np.ndarray]:
+    """Plays a 2-22 kHz linear sweep and measures speaker+mic frequency response."""
+    import sounddevice as sd
+
+    t_dur, f0, f1 = 0.5, 2000.0, 22000.0
+    n = int(t_dur * fs)
+    t = np.arange(n) / fs
+    sweep = np.sin(2 * np.pi * (f0 * t + (f1 - f0) / (2 * t_dur) * t ** 2))
+    fade = int(0.005 * fs)
+    sweep[:fade] *= np.linspace(0, 1, fade)
+    sweep[-fade:] *= np.linspace(1, 0, fade)
+
+    tx = np.concatenate([np.zeros(int(fs // 10)), 0.3 * sweep, np.zeros(int(fs // 5))])
+    stereo = np.zeros((tx.size, 2))
+    stereo[:, 1] = tx
+    rx = sd.playrec(stereo, samplerate=int(fs), channels=1, blocking=True)[:, 0]
+
+    f_axis = np.fft.rfftfreq(tx.size, 1 / fs)
+    resp = np.abs(np.fft.rfft(rx)) / (np.abs(np.fft.rfft(tx)) + 1e-12)
+    freq_centers = []
+    resp_db_list = []
+    for lo in range(2000, 22000, 1000):
+        m = (f_axis >= lo) & (f_axis < lo + 1000)
+        freq_centers.append((lo + 500) / 1000.0)
+        resp_db_list.append(float(20 * np.log10(np.median(resp[m]) + 1e-12)))
+    peak = max(resp_db_list)
+    norm_db = [d - peak for d in resp_db_list]
+    return np.array(freq_centers), np.array(norm_db)
+
+
 # ==============================================================================
 # SIDEBAR NAVIGATION (Shifted to Left of Screen)
 # ==============================================================================
@@ -1440,7 +1490,6 @@ elif selected_studio == "3. Monte Carlo SNR Waterfall":
 # STUDIO 4: REAL ACOUSTIC HARDWARE VALIDATION (FEATURE 8)
 # ==============================================================================
 elif selected_studio == "4. Real Acoustic Hardware":
-    # Load archived real recordings from physical_sonar_check/
     ac_fs = 48000.0
     chirp_sig = design_chirp(2000.0, 8000.0, 0.010, ac_fs)
     frame_samples = int((0.010 + 0.250) * ac_fs)
@@ -1448,102 +1497,278 @@ elif selected_studio == "4. Real Acoustic Hardware":
     rx_file = ROOT_DIR / "physical_sonar_check" / "rx.npy"
     base_file = ROOT_DIR / "physical_sonar_check" / "baseline.npy"
 
-    if rx_file.exists() and base_file.exists():
-        raw_rx = np.load(rx_file)
-        base_env = np.load(base_file)
+    # Initialize live hardware session state
+    if "live_baseline_env" not in st.session_state:
+        st.session_state["live_baseline_env"] = None
+    if "live_rx_audio" not in st.session_state:
+        st.session_state["live_rx_audio"] = None
+    if "live_ac_result" not in st.session_state:
+        st.session_state["live_ac_result"] = None
+    if "live_band_curve" not in st.session_state:
+        st.session_state["live_band_curve"] = None
 
-        # TOP CONTROL DECK
-        with st.container():
-            st.markdown('<div class="control-deck">', unsafe_allow_html=True)
-            st.markdown("#### Hardware Configuration & Telemetry")
+    # TOP CONTROL DECK
+    with st.container():
+        st.markdown('<div class="control-deck">', unsafe_allow_html=True)
+        st.markdown("#### Real Acoustic Hardware & Physical Sonar Transceiver (Feature 8)")
+        st.caption(
+            "Feature 8 turns your physical PC/laptop into an active ultrasonic/acoustic sonar transceiver. "
+            "Linear frequency chirps (2–8 kHz) are transmitted through your real speakers, reflections captured by the microphone, "
+            "aligned to direct-path acoustic arrival (t = 0), and room/chassis clutter subtracted to isolate real physical boundaries."
+        )
 
-            hw_c1, hw_c2, hw_c3 = st.columns(3)
-            with hw_c1:
-                ac_speed = st.number_input("Speed of Sound in Room (m/s)", min_value=320.0, max_value=360.0, value=343.0, step=0.5)
-            with hw_c2:
-                min_range = st.slider("Min Detection Window (m)", min_value=0.5, max_value=2.5, value=1.0, step=0.1)
-                st.caption("Rejects initial speaker chassis ringing swamping the microphone.")
-            with hw_c3:
-                max_range = st.slider("Max Detection Window (m)", min_value=3.0, max_value=8.0, value=5.0, step=0.5)
+        hw_source_mode = st.radio(
+            "Acoustic Hardware Operating Mode",
+            [
+                "Archived Physical Benchmark (Concrete Wall @ 1.797 m, 6.75 σ)",
+                "Live Physical Hardware Test (Speaker & Microphone Transceiver)",
+            ],
+            horizontal=True,
+        )
 
-            ac_result = analyse_recording(
-                raw_rx, chirp_sig, frame_samples, ac_fs,
-                baseline_envelope=base_env, speed_mps=ac_speed,
-                min_range_m=min_range, max_range_m=max_range,
-            )
+        if hw_source_mode == "Archived Physical Benchmark (Concrete Wall @ 1.797 m, 6.75 σ)":
+            if rx_file.exists() and base_file.exists():
+                raw_rx = np.load(rx_file)
+                base_env = np.load(base_file)
 
-            wall_dist = ac_result["distance_m"]
-            wall_sigma = ac_result["quality_sigma"]
-            excess_env = ac_result["excess"]
-            stacked_env = ac_result["envelope"]
+                hw_c1, hw_c2, hw_c3 = st.columns(3)
+                with hw_c1:
+                    ac_speed = st.number_input("Speed of Sound in Room (m/s)", min_value=320.0, max_value=360.0, value=343.0, step=0.5, key="arch_speed")
+                with hw_c2:
+                    min_range = st.slider("Min Detection Window (m)", min_value=0.5, max_value=2.5, value=1.0, step=0.1, key="arch_min_r")
+                    st.caption("Rejects initial speaker chassis ringing swamping the microphone.")
+                with hw_c3:
+                    max_range = st.slider("Max Detection Window (m)", min_value=3.0, max_value=8.0, value=5.0, step=0.5, key="arch_max_r")
 
-            # Telemetry KPI Grid
-            st.markdown(
-                textwrap.dedent(f"""
-                <div class="stat-grid">
-                    <div class="stat-box">
-                        <div class="stat-val val-cyan">Concrete Wall</div>
-                        <div class="stat-label">Reflecting Target</div>
+                ac_result = analyse_recording(
+                    raw_rx, chirp_sig, frame_samples, ac_fs,
+                    baseline_envelope=base_env, speed_mps=ac_speed,
+                    min_range_m=min_range, max_range_m=max_range,
+                )
+
+                wall_dist = ac_result["distance_m"]
+                wall_sigma = ac_result["quality_sigma"]
+                excess_env = ac_result["excess"]
+                stacked_env = ac_result["envelope"]
+
+                # Telemetry KPI Grid
+                st.markdown(
+                    textwrap.dedent(f"""
+                    <div class="stat-grid">
+                        <div class="stat-box">
+                            <div class="stat-val val-cyan">Concrete Wall</div>
+                            <div class="stat-label">Reflecting Target</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-val val-emerald">{wall_dist:.3f} m</div>
+                            <div class="stat-label">Detected Distance</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-val val-amber">{wall_sigma:.2f} σ</div>
+                            <div class="stat-label">Quality Confidence</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-val val-indigo">48.0 kHz</div>
+                            <div class="stat-label">Acoustic Sampling</div>
+                        </div>
                     </div>
-                    <div class="stat-box">
-                        <div class="stat-val val-emerald">{wall_dist:.3f} m</div>
-                        <div class="stat-label">Detected Distance</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-val val-amber">{wall_sigma:.2f} σ</div>
-                        <div class="stat-label">Quality Confidence</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-val val-indigo">48.0 kHz</div>
-                        <div class="stat-label">Acoustic Sampling</div>
-                    </div>
-                </div>
-                """),
-                unsafe_allow_html=True,
-            )
+                    """),
+                    unsafe_allow_html=True,
+                )
 
-            # Audio Player for the Real Recording
-            st.markdown(
-                """
-                <div class="audio-card" style="margin-top: 10px;">
-                    <div class="audio-title">Physical Chirp Probe Audio</div>
-                """,
-                unsafe_allow_html=True,
-            )
-            try:
-                chirp_aud = make_audible(chirp_sig, fs=ac_fs, repeats=4, slowdown=1.0, gap_s=0.3)
-                chirp_wav = to_wav_bytes(chirp_aud["audio"], chirp_aud["rate_hz"])
-                st.audio(chirp_wav, format="audio/wav")
-            except Exception as e:
-                st.caption(f"Audio note: {e}")
-            st.markdown("</div>", unsafe_allow_html=True)
+                # Audio Player for the Real Recording
+                st.markdown(
+                    """
+                    <div class="audio-card" style="margin-top: 14px;">
+                        <div class="audio-title">Physical Benchmark Probe Audio (Transmitted Burst)</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                try:
+                    chirp_aud = make_audible(chirp_sig, fs=ac_fs, repeats=4, slowdown=1.0, gap_s=0.3)
+                    chirp_wav = to_wav_bytes(chirp_aud["audio"], chirp_aud["rate_hz"])
+                    st.audio(chirp_wav, format="audio/wav")
+                except Exception as e:
+                    st.caption(f"Audio note: {e}")
+                st.markdown("</div>", unsafe_allow_html=True)
 
-            st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.warning("Archived physical recordings (rx.npy / baseline.npy) not found in physical_sonar_check/.")
+                ac_result = None
 
-        # FULL-WIDTH HIGH SIGNAL PLOTS (Below all controls)
+        else:
+            # LIVE HARDWARE TRANSCEIVER MODE
+            st.markdown("##### Live PC Acoustic Hardware Configuration")
+
+            live_c1, live_c2, live_c3, live_c4 = st.columns(4)
+            with live_c1:
+                ac_speed = st.number_input("Room Sound Speed (m/s)", min_value=320.0, max_value=360.0, value=343.0, step=0.5, key="live_speed")
+            with live_c2:
+                live_repeats = st.selectbox("Transmit Burst Repeats", [8, 16], index=0, help="8 repeats takes ~2.2s; 16 repeats takes ~4.4s for higher SNR integration.", key="live_rep")
+            with live_c3:
+                min_range = st.slider("Min Detection Window (m)", min_value=0.5, max_value=2.5, value=1.0, step=0.1, help="Rejects direct chassis acoustic leakage.", key="live_min_r")
+            with live_c4:
+                max_range = st.slider("Max Detection Window (m)", min_value=2.5, max_value=8.0, value=5.0, step=0.5, key="live_max_r")
+
+            # 2-Step Live Action Deck
+            st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+            act_c1, act_c2 = st.columns(2)
+
+            with act_c1:
+                st.markdown(
+                    """
+                    <div style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; padding: 16px;">
+                        <h5 style="color: #38bdf8; margin: 0 0 8px 0;">Step 1: Open-Space Baseline Calibration</h5>
+                        <p style="font-size: 0.98rem; color: #94a3b8; margin-bottom: 12px; line-height: 1.5;">
+                            Point your laptop into open room air (at least 3–4 meters clearance). Keep volume around 60–75%.
+                            This records speaker chassis ringing so it can be subtracted from the measurement.
+                        </p>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                b_col1, b_col2 = st.columns([1.2, 1])
+                with b_col1:
+                    if st.button("Record Room Baseline", key="btn_rec_base"):
+                        try:
+                            with st.spinner(f"Transmitting {live_repeats} chirps & recording room baseline ({live_repeats * 0.26:.1f}s)..."):
+                                rec_base = record_live_acoustic(chirp_sig, repeats=live_repeats, fs=ac_fs, amplitude=0.4)
+                                base_res = analyse_recording(rec_base, chirp_sig, frame_samples, ac_fs, baseline_envelope=None)
+                                st.session_state["live_baseline_env"] = base_res["envelope"]
+                                st.toast("Open-space baseline recorded and calibrated successfully!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Audio recording failed: {e}. Check microphone permissions.")
+                with b_col2:
+                    if base_file.exists() and st.button("Use Archived Baseline", key="btn_use_arch_base"):
+                        st.session_state["live_baseline_env"] = np.load(base_file)
+                        st.toast("Loaded archived baseline reference!")
+                        st.rerun()
+
+                base_status = "READY" if st.session_state["live_baseline_env"] is not None else "NOT RECORDED"
+                base_color = "#34d399" if base_status == "READY" else "#fbbf24"
+                st.markdown(f'<div style="margin-top: 10px; font-size: 0.92rem; color: #cbd5e1;">Baseline Status: <strong style="color: {base_color};">{base_status}</strong></div></div>', unsafe_allow_html=True)
+
+            with act_c2:
+                st.markdown(
+                    """
+                    <div style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 12px; padding: 16px;">
+                        <h5 style="color: #38bdf8; margin: 0 0 8px 0;">Step 2: Physical Echo Distance Measurement</h5>
+                        <p style="font-size: 0.98rem; color: #94a3b8; margin-bottom: 12px; line-height: 1.5;">
+                            Point your laptop speaker & mic directly facing a solid wall, closed door, or large object (1 to 5 meters away).
+                            Do not change the system volume.
+                        </p>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button("Transmit Chirps & Measure Echo", key="btn_rec_target"):
+                    try:
+                        active_baseline = st.session_state.get("live_baseline_env")
+                        if active_baseline is None and base_file.exists():
+                            active_baseline = np.load(base_file)
+                            st.info("No live baseline recorded yet — using archived reference baseline.")
+
+                        with st.spinner(f"Transmitting {live_repeats} probing chirps & listening for echoes ({live_repeats * 0.26:.1f}s)..."):
+                            rec_target = record_live_acoustic(chirp_sig, repeats=live_repeats, fs=ac_fs, amplitude=0.4)
+                            res = analyse_recording(
+                                rec_target, chirp_sig, frame_samples, ac_fs,
+                                baseline_envelope=active_baseline, speed_mps=ac_speed,
+                                min_range_m=min_range, max_range_m=max_range,
+                            )
+                            st.session_state["live_rx_audio"] = rec_target
+                            st.session_state["live_ac_result"] = res
+                            st.toast(f"Physical echo detected at {res['distance_m']:.3f} m ({res['quality_sigma']:.1f}σ)!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Live measurement failed: {e}. Ensure speaker and microphone are enabled.")
+
+                st.markdown('<div style="margin-top: 10px; font-size: 0.92rem; color: #94a3b8;">Captures live reflections via sounddevice <code>sd.playrec()</code></div></div>', unsafe_allow_html=True)
+
+            # Check if live result exists
+            if st.session_state["live_ac_result"] is not None:
+                ac_result = st.session_state["live_ac_result"]
+                wall_dist = ac_result["distance_m"]
+                wall_sigma = ac_result["quality_sigma"]
+                excess_env = ac_result["excess"]
+                stacked_env = ac_result["envelope"]
+                base_env = st.session_state.get("live_baseline_env")
+                if base_env is None and base_file.exists():
+                    base_env = np.load(base_file)
+
+                # Telemetry KPI Grid
+                sig_label = "Confirmed Detection" if wall_sigma >= 6.0 else "Weak Echo (Sub-Threshold)"
+                sig_color = "val-emerald" if wall_sigma >= 6.0 else "val-amber"
+
+                st.markdown(
+                    textwrap.dedent(f"""
+                    <div class="stat-grid" style="margin-top: 18px;">
+                        <div class="stat-box">
+                            <div class="stat-val val-cyan">Live Room Echo</div>
+                            <div class="stat-label">Measurement Mode</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-val val-emerald">{wall_dist:.3f} m</div>
+                            <div class="stat-label">Detected Distance</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-val {sig_color}">{wall_sigma:.2f} σ</div>
+                            <div class="stat-label">{sig_label}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-val val-indigo">48.0 kHz</div>
+                            <div class="stat-label">Live Sampling Rate</div>
+                        </div>
+                    </div>
+                    """),
+                    unsafe_allow_html=True,
+                )
+
+                # Audio Player for Live Recorded Audio
+                if st.session_state.get("live_rx_audio") is not None:
+                    st.markdown(
+                        """
+                        <div class="audio-card" style="margin-top: 14px;">
+                            <div class="audio-title">Captured Microphone Audio (Live Acoustic Recording)</div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    try:
+                        live_wav = to_wav_bytes(st.session_state["live_rx_audio"], int(ac_fs))
+                        st.audio(live_wav, format="audio/wav")
+                    except Exception as e:
+                        st.caption(f"Audio playback note: {e}")
+                    st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                ac_result = None
+                st.info("Click **'Transmit Chirps & Measure Echo'** above to test your laptop's real speaker and microphone in your room.")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # FULL-WIDTH HIGH SIGNAL PLOTS (Below all controls)
+    if ac_result is not None:
         st.markdown("### Real Acoustic Traces & Clutter Cancellation")
 
         dist_axis = np.arange(len(excess_env)) * ac_speed / ac_fs / 2.0
         range_mask = (dist_axis >= 0) & (dist_axis <= max_range + 0.5)
 
         # Plot 1: Full-Width Stacked Envelope with Baseline Overlay
-        fig_ac1 = create_dark_figure(height=380, x_title="Distance (m)", y_title="Normalized Envelope")
+        fig_ac1 = create_dark_figure(height=390, x_title="Distance (m)", y_title="Normalized Envelope")
         fig_ac1.add_trace(
             go.Scatter(
                 x=dist_axis[range_mask], y=stacked_env[range_mask],
                 mode="lines", line=dict(color="#38bdf8", width=1.8),
-                name="Target Recording Envelope (Wall + Clutter)",
+                name="Physical Recording Envelope (Target + Clutter)",
                 hovertemplate="Dist: %{x:.3f} m<br>Target Env: %{y:.4f}<extra></extra>",
             )
         )
-        fig_ac1.add_trace(
-            go.Scatter(
-                x=dist_axis[range_mask], y=base_env[range_mask],
-                mode="lines", line=dict(color="#c084fc", width=1.6, dash="dash"),
-                name="Open-Space Baseline (Clutter Only)",
-                hovertemplate="Dist: %{x:.3f} m<br>Baseline: %{y:.4f}<extra></extra>",
+        if base_env is not None and len(base_env) == len(dist_axis):
+            fig_ac1.add_trace(
+                go.Scatter(
+                    x=dist_axis[range_mask], y=base_env[range_mask],
+                    mode="lines", line=dict(color="#c084fc", width=1.6, dash="dash"),
+                    name="Open-Space Baseline (Clutter Only)",
+                    hovertemplate="Dist: %{x:.3f} m<br>Baseline: %{y:.4f}<extra></extra>",
+                )
             )
-        )
         fig_ac1.add_vline(
             x=0, line=dict(color="#38bdf8", width=1.8),
             annotation_text="Direct Arrival (t=0)", annotation_position="top right",
@@ -1564,8 +1789,8 @@ elif selected_studio == "4. Real Acoustic Hardware":
         # Plot 2: Full-Width Clutter-Cancelled Excess Return
         render_plot_header(
             "STAGE 2",
-            "Clutter-Cancelled Excess Return & Peak Wall Detection",
-            f"Physical acoustic reflection isolated via background subtraction, confirming wall echo at {wall_dist:.3f} m ({wall_sigma:.1f}σ).",
+            "Clutter-Cancelled Excess Return & Peak Echo Detection",
+            f"Physical acoustic reflection isolated via background subtraction, confirming target reflection at {wall_dist:.3f} m ({wall_sigma:.1f}σ).",
         )
         fig_ac2 = create_dark_figure(height=420, x_title="Distance (m)", y_title="Excess Amplitude")
         fig_ac2.add_trace(
@@ -1581,10 +1806,10 @@ elif selected_studio == "4. Real Acoustic Hardware":
                 x=[wall_dist], y=[excess_env[ac_result["peak_index"]]],
                 mode="markers+text",
                 marker=dict(color="#34d399", size=12, line=dict(color="#ffffff", width=1.8)),
-                text=[f"Wall @ {wall_dist:.3f} m ({wall_sigma:.1f}σ)"],
+                text=[f"Peak @ {wall_dist:.3f} m ({wall_sigma:.1f}σ)"],
                 textposition="top center",
                 textfont=dict(color="#34d399", size=11, family="JetBrains Mono"),
-                name="Wall Detection",
+                name="Detected Object",
             )
         )
         fig_ac2.add_vrect(
@@ -1595,52 +1820,88 @@ elif selected_studio == "4. Real Acoustic Hardware":
             annotation_font=dict(size=11, color="#38bdf8"),
         )
         fig_ac2.update_layout(
-            title=dict(text="<b>Clutter-Cancelled Excess Return: Confirmed Wall Detection</b>", font=dict(size=14, color="#f1f5f9")),
+            title=dict(text="<b>Clutter-Cancelled Excess Return: Confirmed Physical Reflection</b>", font=dict(size=14, color="#f1f5f9")),
         )
         render_chart(fig_ac2)
 
-        # Hardware Frequency Response Analyzer (band_check.py)
-        with st.expander("Hardware Frequency Response Analysis (from band_check.py)"):
-            st.markdown(
-                """
-                `physical_sonar_check/band_check.py` plays a 2–22 kHz linear chirp to determine the true hardware passband
-                of the laptop's built-in speaker and microphone.
-                """
-            )
+    # Hardware Frequency Response Analyzer & Terminal CLI Guide
+    with st.expander("Hardware Frequency Response Analysis & Terminal CLI Guide"):
+        st.markdown(
+            """
+            `physical_sonar_check/band_check.py` plays a 2–22 kHz linear chirp to determine the true hardware passband
+            of your computer's built-in speaker and microphone.
+            """
+        )
+
+        b_btn_col1, b_btn_col2 = st.columns([1.5, 2])
+        with b_btn_col1:
+            if st.button("Run Live Audio Passband Sweep (2-22 kHz)", key="btn_run_band_live"):
+                try:
+                    with st.spinner("Playing 0.5s sweep (2-22 kHz) and recording response..."):
+                        b_freqs, b_dbs = run_live_band_check(fs=ac_fs)
+                        st.session_state["live_band_curve"] = (b_freqs, b_dbs)
+                        st.toast("Live electroacoustic passband measured!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Band sweep failed: {e}")
+
+        # Choose curve to display
+        if st.session_state.get("live_band_curve") is not None:
+            band_freqs, band_resp_db = st.session_state["live_band_curve"]
+            trace_title = "Live Measured Hardware Response H_hw(f)"
+        else:
             band_freqs = np.array([2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5])
             band_resp_db = np.array([-8.2, -3.1, -1.2, 0.0, -1.8, -4.5, -9.8, -14.2, -18.5, -22.1, -25.4, -28.9, -32.5, -36.1, -39.0, -42.5, -45.0, -48.2, -50.0, -52.0])
+            trace_title = "Benchmark Hardware Response H_hw(f) (from band_check.py)"
 
-            fig_hw = create_dark_figure(height=380, x_title="Frequency (kHz)", y_title="Relative Response (dB)")
-            fig_hw.add_trace(
-                go.Scatter(
-                    x=band_freqs, y=band_resp_db,
-                    mode="lines+markers",
-                    line=dict(color="#38bdf8", width=2.4),
-                    marker=dict(color="#38bdf8", size=8),
-                    name="Measured Hardware Response H_hw(f)",
-                    hovertemplate="Freq: %{x:.1f} kHz<br>Response: %{y:.1f} dB<extra></extra>",
-                )
+        fig_hw = create_dark_figure(height=380, x_title="Frequency (kHz)", y_title="Relative Response (dB)")
+        fig_hw.add_trace(
+            go.Scatter(
+                x=band_freqs, y=band_resp_db,
+                mode="lines+markers",
+                line=dict(color="#38bdf8", width=2.4),
+                marker=dict(color="#38bdf8", size=8),
+                name=trace_title,
+                hovertemplate="Freq: %{x:.1f} kHz<br>Response: %{y:.1f} dB<extra></extra>",
             )
-            fig_hw.add_hline(
-                y=-12.0, line=dict(color="#f43f5e", width=1.8, dash="dot"),
-                annotation_text="-12 dB Usability Threshold", annotation_position="bottom right",
-                annotation_font=dict(size=11, color="#f43f5e"),
-            )
-            fig_hw.add_vrect(
-                x0=2.0, x1=8.0,
-                fillcolor="rgba(52, 211, 153, 0.14)", layer="below", line_width=1.2,
-                line=dict(color="#34d399", dash="dot"),
-                annotation_text="Chosen 2 - 8 kHz Operating Chirp Band", annotation_position="top left",
-                annotation_font=dict(size=11, color="#34d399"),
-            )
-            fig_hw.update_layout(
-                title=dict(text="<b>Electroacoustic Hardware Transfer Function (2–22 kHz)</b>", font=dict(size=14, color="#f1f5f9")),
-            )
-            render_chart(fig_hw)
+        )
+        fig_hw.add_hline(
+            y=-12.0, line=dict(color="#f43f5e", width=1.8, dash="dot"),
+            annotation_text="-12 dB Usability Threshold", annotation_position="bottom right",
+            annotation_font=dict(size=11, color="#f43f5e"),
+        )
+        fig_hw.add_vrect(
+            x0=2.0, x1=8.0,
+            fillcolor="rgba(52, 211, 153, 0.14)", layer="below", line_width=1.2,
+            line=dict(color="#34d399", dash="dot"),
+            annotation_text="Chosen 2 - 8 kHz Operating Chirp Band", annotation_position="top left",
+            annotation_font=dict(size=11, color="#34d399"),
+        )
+        fig_hw.update_layout(
+            title=dict(text=f"<b>Electroacoustic Hardware Transfer Function (2–22 kHz)</b>", font=dict(size=14, color="#f1f5f9")),
+        )
+        render_chart(fig_hw)
 
-            st.caption(
-                "Insight: Frequencies below 2 kHz suffer severe chassis high-pass rolloff, while frequencies above 8 kHz drop beyond -12 dB. "
-                "Operating between 2 kHz and 8 kHz maximizes energy transmission and signal-to-noise ratio in ambient room conditions."
-            )
-    else:
-        st.warning("Archived physical recordings (rx.npy / baseline.npy) not found in physical_sonar_check/.")
+        st.caption(
+            "Insight: Frequencies below 2 kHz suffer severe chassis high-pass rolloff, while frequencies above 8 kHz drop beyond -12 dB. "
+            "Operating between 2 kHz and 8 kHz maximizes energy transmission and signal-to-noise ratio in ambient room conditions."
+        )
+
+        st.markdown("---")
+        st.markdown("##### Direct PowerShell / Terminal Command Line Execution")
+        st.markdown(
+            """
+            If you prefer running tests from the command line outside Streamlit, use the dedicated scripts in `physical_sonar_check/`:
+            
+            ```powershell
+            # 1. Measure speaker + microphone frequency passband:
+            python physical_sonar_check/band_check.py
+
+            # 2. Record the empty-room reference baseline (point laptop into open space with >3m clearance):
+            python physical_sonar_check/record_acoustic.py baseline
+
+            # 3. Point laptop facing a solid wall or obstacle and measure physical distance:
+            python physical_sonar_check/record_acoustic.py
+            ```
+            """
+        )
