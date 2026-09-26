@@ -37,18 +37,19 @@ def run_snr_sweep(
 
     if bandpass and (low_hz is None or high_hz is None):
         measured_bw = pulse_bandwidth_hz(pulse, fs)
-        low_hz = freq_hz - measured_bw
-        high_hz = freq_hz + measured_bw
-        if low_hz <= 0:
-            raise ValueError(
-                f"bandpass filter low_hz={low_hz} <= 0; "
-                f"try a longer duration_s or higher freq_hz"
-            )
-        if high_hz >= fs / 2:
-            raise ValueError(
-                f"bandpass filter high_hz={high_hz} >= fs/2; "
-                f"try a longer duration_s or lower freq_hz"
-            )
+        nyquist_hz = fs / 2
+        widest_low_hz, widest_high_hz = nyquist_hz * 0.002, nyquist_hz * 0.98
+
+        # A pulse that is short relative to its carrier is wider in bandwidth
+        # than the carrier itself, which puts the lower cutoff at or below zero.
+        # Earlier this refused to run. Clamping is better: it errs towards
+        # filtering less, which is the direction that cannot manufacture a
+        # result, and the band actually used comes back in the returned dict so
+        # the caller can say what happened.
+        low_hz = max(freq_hz - measured_bw, widest_low_hz)
+        high_hz = min(freq_hz + measured_bw, widest_high_hz)
+        if low_hz >= high_hz:
+            low_hz, high_hz = widest_low_hz, widest_high_hz
 
     snr_list, rmse_list = [], []
     for snr_db in snr_values_db:
@@ -66,7 +67,12 @@ def run_snr_sweep(
         rmse_list.append(float(np.sqrt(np.mean(np.square(errors)))))
         snr_list.append(snr_db)
 
-    return {"snr_db": snr_list, "rmse_m": rmse_list}
+    return {
+        "snr_db": snr_list,
+        "rmse_m": rmse_list,
+        "low_hz": low_hz if bandpass else None,
+        "high_hz": high_hz if bandpass else None,
+    }
 
 
 def describe_pulse_config(config: dict) -> str:
