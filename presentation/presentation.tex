@@ -121,7 +121,6 @@
         \fill[navy] (current page.south west) rectangle (current page.north east);
         \fill[blueaccent!15, opacity=0.08] (current page.north east) circle (6.5cm);
         \fill[teal!20, opacity=0.05] (current page.south west) circle (5cm);
-        \draw[blueaccent!40, line width=1.5pt] ($(current page.north west)+(1cm,-1cm)$) -- ($(current page.south east)+(-1cm,1cm)$);
     \end{tikzpicture}
     
     \vspace{0.3cm}
@@ -131,7 +130,7 @@
         {\textcolor{blueaccent!90}{\large \textit{Pulse-Echo Ranging, Matched Filtering, and Range Resolution Limits}}}\\[16pt]
         
         \begin{tikzpicture}
-            \node[fill=white!10, rounded corners=6pt, draw=white!20, inner sep=9pt, text width=0.84\linewidth, align=center] {
+            \node[fill=white, fill opacity=0.10, text opacity=1, draw=white, draw opacity=0.30, rounded corners=6pt, inner sep=9pt, text width=0.84\linewidth, align=center] {
                 \textcolor{white}{\textbf{\normalsize Team SevenEight}}\\[5pt]
                 \textcolor{white}{\textbf{Aditya Tirtho Roy}} \textcolor{blueaccent!60}{(2305178)} \quad$\vert$\quad
                 \textcolor{white}{\textbf{Farhan Ehsas Sami}} \textcolor{blueaccent!60}{(2305177)}\\[3pt]
@@ -169,7 +168,7 @@
         \draw[-{Stealth[length=3mm]}, blueaccent, line width=1.6pt] ($(tx.east)+(0,0.4)$) -- node[above, text=navy, font=\footnotesize] {\textbf{Transmit Pulse} $x(t)$} ($(target.west)+(0,0.4)$);
         
         % Reflected Wave
-        \draw[-{Stealth[length=3mm]}, crimson, line width=1.6pt, dashed] ($(target.west)+(0,-0.4)$) -- node[below=2pt, text=navy, font=\footnotesize] {\textbf{Weak Echo} $\alpha x(t-\Delta t)+n(t)$} ($(tx.east)+(0,-0.4)$);
+        \draw[-{Stealth[length=3mm]}, crimson, line width=1.6pt, dashed] ($(target.west)+(0,-0.4)$) -- node[below=7pt, text=navy, font=\scriptsize, fill=lightbg, inner sep=2pt] {\textbf{Weak Echo} $\alpha x(t-\Delta t)+n(t)$} ($(tx.east)+(0,-0.4)$);
         
         % Round-trip indicator
         \draw[<->, slate, line width=0.9pt] (0, 0.28) -- node[below=2pt, font=\footnotesize, text=navy] {\textbf{Round trip:} $\Delta t = \dfrac{2d}{c}$, hence $d = \dfrac{c\Delta t}{2}$} (6.2, 0.28);
@@ -183,8 +182,8 @@
             \begin{tikzpicture}
                 \node[draw=crimson!50, fill=crimson!5, rounded corners=6pt, line width=1pt, text width=0.90\linewidth, minimum height=1.65cm, inner sep=6pt, align=center] {
                     \textcolor{crimson}{\textbf{\small 1. Severe Noise}}\\[3pt]
-                    \scriptsize Echoes weaken as $1/r^2$.\\
-                    At $0\text{ dB}$ SNR, the raw\\
+                    \scriptsize Echoes weaken as $1/r^2$.
+                    At $0\text{ dB}$ SNR, the raw
                     waveform can hide them completely.
                 };
             \end{tikzpicture}
@@ -193,8 +192,8 @@
             \begin{tikzpicture}
                 \node[draw=coral!50, fill=coral!5, rounded corners=6pt, line width=1pt, text width=0.90\linewidth, minimum height=1.65cm, inner sep=6pt, align=center] {
                     \textcolor{coral}{\textbf{\small 2. Echo Merging}}\\[3pt]
-                    \scriptsize Closely spaced targets create\\
-                    overlapping echoes that appear\\
+                    \scriptsize Closely spaced targets create
+                    overlapping echoes that appear
                     as one merged return.
                 };
             \end{tikzpicture}
@@ -203,8 +202,8 @@
             \begin{tikzpicture}
                 \node[draw=blueaccent!50, fill=blueaccent!5, rounded corners=6pt, line width=1pt, text width=0.90\linewidth, minimum height=1.65cm, inner sep=6pt, align=center] {
                     \textcolor{blueaccent}{\textbf{\small 3. Energy Dilemma}}\\[3pt]
-                    \scriptsize Short pulses resolve targets\\
-                    but carry little energy; long pulses\\
+                    \scriptsize Short pulses resolve targets
+                    but carry little energy; long pulses
                     are stronger but blur targets.
                 };
             \end{tikzpicture}
@@ -660,7 +659,7 @@
             \begin{enumerate}\footnotesize\setlength\itemsep{2pt}
                 \item \textbf{Windowed Chirp:} $2\text{--}8\text{ kHz}$ sweep shaped to laptop speaker response.
                 \item \textbf{Direct-Path Sync:} Lock onto speaker-to-mic direct bleed as $t = 0$ origin.
-                \item \textbf{Frame Folding:} Coherently average 4 bursts $\to$ cancels room noise.
+                \item \textbf{Frame Folding:} Coherently average 16 bursts $\to$ cancels room noise.
                 \item \textbf{Clutter Removal:} Subtract empty-room baseline $\to$ removes furniture reflections and speaker ring.
             \end{enumerate}
             
@@ -892,7 +891,7 @@
             \vspace{4pt}
             \textbf{\textcolor{navy}{\small Q4: How did you cancel direct speaker bleed on hardware?}}
             \begin{itemize}\scriptsize
-                \item \textbf{Answer:} Speaker-to-mic bleed arrives first ($\approx 10\text{ cm}$) and synchronizes $t=0$. We then coherently fold 4 frames and subtract an empty-room baseline recording (clutter removal), revealing reflections above $6\sigma$.
+                \item \textbf{Answer:} Speaker-to-mic bleed arrives first ($\approx 10\text{ cm}$) and synchronizes $t=0$. We then coherently fold 16 frames and subtract an empty-room baseline recording (clutter removal), revealing reflections above $6\sigma$.
             \end{itemize}
         \end{column}
     \end{columns}
