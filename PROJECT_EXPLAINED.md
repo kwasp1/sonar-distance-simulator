@@ -326,3 +326,504 @@ Feature 8 stays verified with no hardware attached.
   the individual centimetre values would be steadier with per-config seeds.
 - Detecting a *weaker* second target is harder than an equal one: 22/30 trials
   even at 20 dB SNR. Real, and worth reporting.
+
+---
+
+## 10. The app, section by section
+
+Five sections, reached from the top bar. Sections 1, 2 and 5 are **live** — every
+control redraws immediately. Sections 3 and 4 are **studies** — set them up, press
+run, read the graph.
+
+Layout is the same throughout: stages on the left, and on the right the reading,
+the **Settings** tab and the **Audio** tab. Click **Enlarge** on a small panel to
+swap it into the big slot.
+
+---
+
+### Section 1 — Send a Pulse, Find the Echo
+
+**Answers:** can we find one echo, and how accurately?
+
+**The three stages**
+
+| Stage | Shows | Look for |
+|---|---|---|
+| 1 · Transmit — *The pulse we send* | The outgoing pulse. Toggle **Waveform / Spectrum** | Spectrum view marks the −3 dB width — the "sharpness" number |
+| 2 · Receive — *What the microphone hears* | The whole recording: echo plus hiss. Shaded band = where the echo truly is | At 0 dB the echo is invisible by eye. That is the point |
+| 3 · Detect — *Where the echo is* | Matched filter output. Dashed line marks the detected peak | One sharp spike out of that mess |
+
+**Reading:** Estimated distance (large), with the error underneath, plus true
+distance and round-trip time.
+
+**Controls**
+
+| Control | What it does, in plain words | Watch |
+|---|---|---|
+| **Target distance** | How far away you are pretending the object is. The simulator places the echo that far out, and the receiver has to find it again without being told. | The peak slides along stage 3 |
+| **Noise level (SNR)** | How loud the echo is **compared with** the hiss. It is a ratio, so **higher means cleaner, not noisier** — the left end of the slider is the hard end. | 20 dB clean → 0 dB invisible by eye → −10 dB breaks |
+| **Pulse shape** | Which beep to send. *rect* = abrupt on/off tone, *gaussian* = same tone faded in and out, *chirp* = a tone sliding from low to high. | Stage 1 changes shape; bandwidth changes with it |
+| **Pulse length** | How long the beep lasts. Shorter beeps cover a wider range of frequencies, which makes them "sharper". | Shorter = wider bandwidth = narrower peak |
+| **Carrier frequency** | The **pitch** of the tone inside the beep. 4000 Hz means the wave wiggles 4000 times a second. | Stage 1's wiggles get faster |
+| **Chirp sweep width** | *(chirp only)* How far the pitch slides from start to end. This is what gives a chirp its bandwidth without making it shorter. | Wider = sharper correlation peak |
+| **Advanced** | | |
+| **Speed of sound** | The number used to convert time into distance. 343 m/s in air. | Change it and every estimate is wrong — it *is* the conversion factor |
+| **Sampling rate** | How many measurements per second are taken, 16–96 kHz. Finer sampling = finer distance steps. | Sets the 1.8 mm accuracy floor |
+| **Echo strength** | How much weaker the echo comes back. Does not move it, only quietens it. | Same position, smaller peak |
+| **Noise seed** | Fixes the random generator, so the same number always gives the same hiss. | For demos you can repeat exactly |
+| **Audio slowdown** | How much to stretch the sound so a 2 ms beep is audible. | 4× is the sweet spot |
+| **Band-pass filter** | Throws away frequencies outside the pulse's band before detecting. | Barely changes anything — and that *is* the finding |
+
+**Audio tab:** the outgoing ping and the received echo, slowed so a 2 ms pulse is
+audible. Move the SNR slider and replay: the ping stays the same loudness while the
+hiss grows, because both clips share one gain.
+
+> **Demo:** set SNR to 0 dB. Stage 2 looks like pure static; stage 3 still spikes,
+> and the reading is still right to a few millimetres.
+
+---
+
+### Section 2 — Two Targets, Can We Separate Them?
+
+**Answers:** when do two objects stop looking like two?
+
+**The two stages**
+
+| Stage | Shows |
+|---|---|
+| 1 · Receive — *Both echoes arrive on top of each other* | The recording. Dashed lines mark the true targets |
+| 2 · Detect — *One peak per target?* | The envelope of the matched filter. Two humps = resolved; one = merged |
+
+**Reading:** Targets found (2/2 or 1/2), the separation you set, and the theory
+limit `c/2B` — so you can see whether you are above or below it. Below is a table
+with each target's truth, detection and error.
+
+**Controls**
+
+| Control | What it does, in plain words |
+|---|---|
+| **Target 1 distance** | Where the pair of objects sits. Moving it does not change whether they can be separated — only *where* the pair appears. |
+| **Target 2 separation** | **The main dial.** How far behind target 1 the second object sits. Shrink it until the two humps merge into one. |
+| **Target 1 / 2 reflectivity** | How strongly each object bounces sound back. A weaker second target is genuinely harder to spot than an equal one. |
+| **Pulse shape / length / chirp width** | Together these set the **bandwidth**, and bandwidth is what sets how close two objects can be. Sharper beep, closer objects. |
+| **Noise level (SNR)** | Higher = cleaner. Noise makes merging happen sooner. |
+| **Advanced** | |
+| **Add a third target** | Puts a third object in the scene, with its own distance and reflectivity. |
+| **Speed / sampling rate / carrier** | Same meanings as section 1. |
+| **Detection sensitivity** | How tall a hump must be to count as an object. **Lower finds more** — including fake ones. See section 12. |
+| **Minimum gap between detections** | How close two humps may be before the detector calls them one object. Measured in samples, which is really a distance floor. See section 12. |
+
+> **Demo:** start at 40 cm — two clean humps, 2/2. Shrink to 8 cm — one hump, 1/2.
+> The crossover for the default pulse is around 15 cm, against a 21.8 cm theory limit.
+
+> **Likely question: why does it resolve better than theory?** `c/2B` is a
+> conservative convention, and a peak-finder on a clean envelope beats it.
+
+---
+
+### Section 3 — Bandwidth vs Resolution *(a study)*
+
+**Answers:** is bandwidth really what sets resolution — not pulse length?
+
+**Step 1 — Settings**, **Step 2 — The graph**. Log–log: measured points against the
+dashed `c/2B` line. Parallel lines = same power law. Circles are gaussians, triangles
+are chirps. A table underneath gives the ratio per pulse.
+
+**Controls**
+
+| Control | What it does, in plain words |
+|---|---|
+| **Which pulses to compare** | Both families, gaussians only, or chirps only. Both is the honest choice — see the note below. |
+| **Gaussian pulse lengths** | Which durations to test. For a gaussian, changing the length *is* changing the bandwidth; they are locked together. |
+| **Chirp sweep widths** | Which bandwidths to test. All chirps stay 2 ms long, so **only** bandwidth changes. That is the controlled experiment. |
+| **Trials per separation** | How many times each separation is tested. Each trial nudges the pair to a slightly different distance, so one lucky wave alignment cannot be mistaken for a real result. More trials = steadier answer, slower run. |
+| **Advanced** | |
+| **Counts as resolved at** | What fraction of trials must succeed before a separation counts. 50% is the default: it has to work more often than not. |
+| **Distance to the pair** | How far out the two objects sit. Should not change the answer — useful as a sanity check that it doesn't. |
+| **Widest separation / step** | How far out to search and in what increments. A 1 cm step gives a finer answer than 5 cm, and takes five times longer. |
+| **Detection sensitivity** | Same knob as section 2. See section 12. |
+| **Minimum gap between detections** | **The one to be careful with.** Deliberately small here. Turn it up and you will measure the detector instead of the physics. See section 12. |
+
+> **Why both families matter:** a gaussian's bandwidth is tied to its duration, so
+> gaussians alone cannot separate "wider bandwidth helps" from "shorter pulse
+> helps". The chirps hold duration fixed at 2 ms and vary only bandwidth. That is
+> what pins the credit on bandwidth.
+
+> **Careful with "minimum gap".** Turn it up and the curve flattens — you would be
+> measuring the detector's floor, not the physics. That exact trap produced a
+> perfectly flat, completely wrong result during development.
+
+> **The numbers move with the settings.** Few trials and coarse steps read ~0.80×;
+> the finer settings used for the report read ~0.55×. Coarser is more permissive.
+
+---
+
+### Section 4 — How Much Noise Before It Fails? *(a study)*
+
+**Answers:** how much noise can it take?
+
+**Step 1 — Settings**, **Step 2 — The graph**. Distance error against SNR, log y.
+Blue = matched filter alone, purple = with the band-pass filter, dashed amber = the
+1.8 mm half-sample limit.
+
+**Shape is the result:** flat and near-perfect above 0 dB, then a **cliff**. Below a
+critical SNR the peak occasionally locks onto a noise sidelobe instead of the echo,
+so errors jump to metres rather than drifting.
+
+**Controls**
+
+| Control | What it does, in plain words |
+|---|---|
+| **Evaluation distance** | Where the single target sits for the whole sweep. Pick a distance that lands on a whole number of samples and the error at high SNR really is zero. |
+| **Noise range (SNR)** | The span of noise levels to test, as a two-ended slider. **The left end is the difficult end.** |
+| **Trials per point** | How many noisy runs at each noise level. The result is the RMS error over those trials, so more trials means a smoother, more trustworthy curve — and a slower run. |
+| **Pulse shape** | Which beep to test. The cliff appears for all three, at slightly different places. |
+| **Advanced** | Step size between noise levels, plus pulse length and carrier. |
+| **Also run with a band-pass filter** | Runs the whole sweep a second time with the filter on and draws it in purple. The two curves landing on top of each other is the result, not a bug. |
+
+Progress is counted honestly while it runs. Change a setting after a run and the old
+graph stays with an amber "settings changed" note rather than silently clearing.
+
+> **Demo:** leave the band-pass on. The two curves sit on top of each other —
+> pre-filtering buys nothing against white noise, because the matched filter is
+> already the optimal detector.
+
+---
+
+### Section 5 — Real Sound Test *(live hardware)*
+
+**Answers:** does any of this work on real sound?
+
+**The three stages**
+
+| Stage | Shows |
+|---|---|
+| 1 · Compare — *This recording vs the empty room* | Grey = empty room, blue = this recording. Mostly identical — that is the clutter |
+| 2 · Detect — *What is new in the room* | After subtracting the empty room. What survives is the target |
+| Transmit — *The chirp we send* | The 2–8 kHz, 10 ms sweep |
+
+**Reading:** measured distance and a confidence in **sigma**. Above 6σ is a real
+detection.
+
+**Controls**
+
+| Control | What it does, in plain words |
+|---|---|
+| **Where the recording comes from** | A saved wall recording (1.80 m), a saved hand recording (0.27 m), or record live with your own speaker and microphone. The saved ones always work, so the demo cannot fail. |
+| **Speed of sound in the room** | The time-to-distance conversion again. Warmer air is slightly faster. |
+| **Ignore closer than** | The laptop's own speaker rings for a moment after each chirp, and the microphone hears it. Anything inside this range is the laptop hearing itself, not an object. |
+| **Ignore further than** | The far end of the search. Beyond this, returns are too weak to trust. |
+| *(live)* **Chirps per burst** | How many times to transmit and stack. 16 is twice as slow as 8 but roughly √2 cleaner, because the echo adds up while random noise averages out. |
+| *(live)* **Record room baseline** | Step 1. Point at open space and record what the room sounds like with nothing in front of you. |
+| *(live)* **Measure the echo** | Step 2. Aim at the target and record again. The baseline gets subtracted, so only what *changed* survives. |
+
+> **Live procedure:** baseline facing open space, then measure facing the target,
+> **without changing the system volume in between** — the subtraction only cancels
+> if the speaker ringing is identical.
+
+> **Two results already banked:** a wall at **1.797 m (6.7σ)** and a hand at
+> **0.272 m (6.2σ)**. Both survive in saved recordings, so the demo works even if
+> the room is noisy or the microphone is blocked.
+
+---
+
+## 11. Glossary
+
+Every term the project uses, in plain words.
+
+### The signal
+
+**Pulse** — the short "beep" we send. Just a list of numbers.
+
+**Buffer** — the long recording we listen to afterwards. Mostly silence, with the
+echo somewhere inside. *Where* the echo sits is the distance.
+
+**Carrier frequency** — the pitch of the tone inside the pulse. 4000 Hz here.
+
+**Envelope (of a pulse)** — the smooth outline the oscillation fits inside. A
+gaussian pulse is a tone with a bell-shaped envelope; a rect pulse's envelope is a
+flat-topped box.
+
+**Chirp (LFM, linear frequency modulation)** — a pulse whose pitch slides from low
+to high. Matters because it **breaks a trade-off**: normally a short pulse gives
+good resolution but carries little energy. A chirp can be long (lots of energy) and
+still wide in bandwidth (good resolution).
+
+**Sampling rate (`fs`)** — how many measurements per second. 48 000 Hz here. Sets
+how finely time — and therefore distance — can be measured.
+
+**Nyquist** — half the sampling rate; the highest frequency that can be represented.
+Above it, a frequency *aliases*: it masquerades as a lower one. At `fs` = 48 kHz,
+Nyquist is 24 kHz.
+
+**Unit energy** — scaling every pulse so its squared samples sum to 1, so all shapes
+carry the same total energy and comparisons under noise are fair.
+
+### Frequency
+
+**FFT / spectrum** — the Fourier transform converts a signal from *amplitude over
+time* into *how much of each frequency it contains*. Same signal, different view.
+
+**Bandwidth** — how wide a range of frequencies a pulse occupies. Wider = "sharper"
+= better at separating close objects.
+
+**dB (decibel)** — a logarithmic ratio, `10·log₁₀(power ratio)`. Compresses huge
+ranges: +10 dB = 10× the power, +20 dB = 100×, −10 dB = one tenth.
+
+**−3 dB** — half power (`10·log₁₀(0.5) ≈ −3`). Bandwidth is measured at this level,
+so "−3 dB bandwidth" means the width of the band carrying at least half the peak power.
+
+**Time-bandwidth product** — duration × bandwidth. Low values give a chirp soft
+spectral edges, so its measured bandwidth falls short of its nominal sweep.
+
+### Noise
+
+**SNR (signal-to-noise ratio)** — how loud the echo is compared with the hiss, in dB.
+**0 dB means equal.** +20 dB = echo 100× stronger. −10 dB = noise 10× stronger. Higher
+is easier.
+
+> **The classic confusion: higher SNR means LESS noise, not more.** SNR is a
+> *ratio* — echo power divided by noise power — so turning it up makes the job
+> easier, not harder. If you want to think in terms of "how much noise", read the
+> slider backwards: the **left** end is the noisy, difficult end.
+>
+> ```
+> SNR (dB) = 10 · log₁₀( echo power / noise power )
+> ```
+>
+> This is why the error curve in section 4 falls as you move right: more signal
+> relative to noise, less error.
+
+**AWGN (additive white Gaussian noise)** — the standard noise model.
+*Additive* = added on top of the signal. *White* = equal power at every frequency.
+*Gaussian* = sample values follow a bell curve.
+
+**Seed** — a number that fixes the random generator, so the same "random" noise can
+be reproduced exactly. Essential for fair comparisons and repeatable tests.
+
+**Monte Carlo** — running many randomised trials and averaging, because one trial is
+one dice roll.
+
+### Finding the echo
+
+**Matched filter** — slide the known transmitted pulse along the noisy recording and
+score the overlap at every position. The echo lines up and scores high; hiss does not
+line up and averages out. **Provably the best possible detector** for a known shape
+in white noise.
+
+**Cross-correlation** — the maths that does that sliding-and-scoring (`np.correlate`).
+The matched filter *is* a cross-correlation with the transmitted pulse.
+
+**argmax** — "argument of the maximum": **not the biggest value, but its position**.
+`np.argmax([3, 9, 4])` returns `1`, not `9`. Central here because position is what
+encodes distance — we don't care how strong the match was, only *where* it was.
+
+**Envelope (Hilbert / analytic envelope)** — the smooth curve traced over the peaks
+of an oscillating signal. The raw correlation wobbles at the carrier frequency, so
+counting its crests finds dozens of fake "peaks". The envelope smooths that away,
+leaving one hump per real echo. Used for *counting* echoes, never for *locating* a
+single one — smoothing widens the peak and makes it easier for noise to shift.
+
+**Prominence** — how far a peak rises above the dips around it. Used to ignore small
+ripples and keep only real echoes.
+
+**Sidelobe** — the smaller secondary peaks either side of the main correlation peak.
+At low SNR, noise can push a sidelobe above the true peak — the detector locks onto
+the wrong one, which is exactly what causes the **SNR cliff**.
+
+### Measuring how good it is
+
+**RMSE (root-mean-square error)** — square every error, average them, take the square
+root. Keeps the answer in metres and punishes a few big misses more than many small
+ones.
+
+**Quantisation** — rounding to whole samples. Delay can only be a whole number of
+samples, so there is a floor of about **1.8 mm** (`c / 4·fs`) below which distance
+cannot be measured, even with zero noise.
+
+**Range resolution** — the closest two objects can be while still being seen as two.
+
+**Rayleigh criterion** — the conventional rule for when two peaks count as separated.
+Here `ΔR ≈ c / (2B)`. Deliberately conservative, which is why measurements beat it.
+
+**Sigma (σ)** — standard deviation, a measure of spread. "6σ" means a peak stands six
+standard deviations above the background — far too large to be chance. The usual bar
+for "this is a real detection".
+
+### Filtering
+
+**Butterworth filter** — a standard filter design with a maximally flat passband
+(no ripple in the frequencies it keeps).
+
+**Band-pass** — keeps a band of frequencies, discards everything above and below.
+
+**Group delay** — the time shift a filter introduces. Fatal here: a shifted signal
+means a shifted echo means a wrong distance.
+
+**`filtfilt`** — runs the filter forwards, then backwards. The two passes cancel each
+other's phase shift, giving **zero group delay**. This is why `filtfilt` is used and
+`lfilter` is not.
+
+### Real-world extras
+
+**Attenuation** — how much weaker the returning echo is than what was sent.
+
+**Superposition** — waves simply add. Three objects produce exactly the sum of three
+one-object recordings, which is why multi-target simulation is a few lines.
+
+**Multipath** — several echoes arriving from several reflectors or paths.
+
+**Clutter** — returns from things you do not care about: the desk, the walls, the
+laptop's own chassis ringing.
+
+**Direct path** — the speaker's sound reaching the microphone directly, without
+bouncing off anything. It arrives first and is used as the **t = 0 reference**.
+
+**Coherent averaging (frame folding)** — transmitting many times and stacking the
+recordings. The echo lands in the same place every time so it grows; random noise
+does not, so it averages away.
+
+---
+
+## 12. The four settings people get wrong
+
+The rest are self-explanatory. These four are not.
+
+---
+
+### Sampling rate — how often you measure
+
+Think of filming. A camera at 30 fps takes 30 photos a second, and that is all a
+video is. Sampling rate is the same for sound: **48 000 Hz means 48 000 snapshots
+of the wave every second.** Sound is a continuous wobble in the air; a computer
+cannot store "continuous", so it measures the height 48 000 times a second and
+keeps those numbers. The whole project is those numbers.
+
+**It decides two things.**
+
+**1. Your accuracy floor.** One sample lasts 20.83 microseconds. Sound covers
+7.1 mm in that time — but it is a round trip, so it is **3.573 mm of target
+distance per sample**. Delay can only be a whole number of samples, so rounding
+costs up to half of that:
+
+```
+half-sample error = 1.786 mm      ← this is the 1.8 mm floor
+```
+
+That is why RMSE bottoms out at 1.8 mm instead of zero. Double the sampling rate
+and the floor halves.
+
+**2. The highest pitch you can record — Nyquist.** You need at least two samples
+per wave cycle to see a wave at all: one for the top, one for the bottom. So the
+highest frequency you can represent is **half the sampling rate** — 24 000 Hz here.
+Above it a frequency *aliases*: it masquerades as a lower one, like wagon wheels
+appearing to spin backwards in old films.
+
+That is the rule behind the app's guard: a 12 000 Hz carrier at a 16 000 Hz
+sampling rate is impossible, because Nyquist there is only 8 000 Hz. The app
+clamps it and says so rather than crashing.
+
+---
+
+### Carrier frequency — the pitch of the beep
+
+4000 Hz means the wave wiggles up and down **4000 times a second**. Low number =
+deep hum, high number = shrill whistle.
+
+**A pulse is two things multiplied together:**
+
+- the **carrier** — the fast wiggle, which sets the *pitch*
+- the **envelope** — the slow shape fading it in and out, which sets *how long and
+  how loud*
+
+Like briefly pressing one piano key. The key you press is the carrier; how long you
+hold it is the envelope.
+
+**How it all fits, in real numbers:**
+
+```
+sampling rate   48 000 samples/sec
+carrier          4 000 Hz   →  48000 / 4000 = 12 samples per wiggle
+2 ms pulse      →  96 samples  =  8 complete wiggles
+```
+
+So the transmitted pulse is literally **96 numbers**, holding **8 wiggles** of a
+4 kHz tone, each drawn with **12 points**. Count the humps in stage 1 and you will
+find eight.
+
+> **Sampling rate vs carrier — the distinction that matters.** They sound similar
+> and do opposite jobs. Sampling rate is how finely you *record*; carrier is what
+> you *send*. Sampling rate is the ruler, carrier is the thing being measured — and
+> the ruler must be at least twice as fine as the thing. That is Nyquist.
+
+---
+
+### Detection sensitivity — how tall must a bump be?
+
+Think of a mountain range. A small lump on the side of a big mountain is not its
+own mountain. What makes something a peak is how far it rises above the dip beside
+it — its **prominence**.
+
+This slider sets the bar, as a fraction of the tallest peak. At `0.4`, a bump must
+rise **40% of the biggest peak's height** above the dips around it to count.
+
+```
+lower  (0.05)  → very sensitive → finds more peaks, including invented ones
+higher (0.80)  → very strict    → only obvious peaks, misses real weak echoes
+```
+
+**It is a genuine trade-off, measured rather than guessed.** Calibrated on this
+project at 0 dB noise:
+
+| Setting | False alarms | Catches a real weak second echo |
+|---|---|---|
+| 0.2 | **100%** — one object reported as two, every time | yes |
+| **0.4** | ~10% | sometimes — chosen as the default |
+| 0.7 | ~0% | almost never |
+
+There is no free setting. Loosen it and you invent objects; tighten it and you miss
+real ones.
+
+**Why it is needed at all:** the envelope is never perfectly smooth. Real echoes sit
+on a rippling baseline, and without a bar every ripple becomes an "object".
+
+---
+
+### Minimum gap between detections — the one that can fake a result
+
+**How close can two humps be before you decide they are the same object?**
+
+Measured in **samples**, and a sample is a fixed distance — 3.573 mm. So this
+setting is really a distance floor in disguise:
+
+```
+  8 samples  →   2.9 cm      (bandwidth study default)
+ 24 samples  →   8.6 cm      (section 2 default, 2 ms pulse)
+ 48 samples  →  17.1 cm      (the receiver's own default for a 2 ms pulse)
+```
+
+Set it to 24 and the detector **physically cannot report two targets closer than
+8.6 cm**, whatever the physics says.
+
+**Why it is needed:** a single echo's envelope wobbles slightly, and two adjacent
+wobbles on one hump would otherwise be counted as two objects.
+
+**Why it is dangerous.** The receiver's built-in default is `len(pulse) // 2` —
+half the pulse length. That sounds sensible until you see what it means:
+
+| Pulse | Bandwidth | Theory limit c/2B | Detector floor |
+|---|---|---|---|
+| 2 ms gaussian | 785 Hz | 21.8 cm | 17.1 cm |
+| 10 ms gaussian | 156 Hz | 109.8 cm | **85.8 cm** |
+
+The floor is set by **pulse length**, which has nothing to do with bandwidth. For
+gaussians the two happen to move together, so the problem hides. But for a **chirp**
+— duration fixed at 2 ms while bandwidth changes — the floor stays frozen at 17.1 cm
+while the true limit falls to 3 cm.
+
+That is why the bandwidth study forces it down to **8 samples**. Left at the default,
+all three chirps reported exactly 17.0 cm across a 3.5× bandwidth range: a perfectly
+flat line that looked like a real finding and said the *opposite* of the truth.
+
+> **The one-line version:** these last two settings control the **detector**, not the
+> physics. Set them wrong and you measure your own tuning.

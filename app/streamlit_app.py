@@ -62,8 +62,9 @@ LINE_THRESH = dict(color=THRESH, width=1, dash="dash")
 SCREENS = [
     ("m1", "01", "Send a Pulse, Find the Echo", "Single target"),
     ("m2", "02", "Two Targets — Can We Separate Them?", "Range resolution"),
-    ("m3", "03", "How Much Noise Before It Fails?", "Monte Carlo sweep"),
-    ("m4", "04", "Real Sound Test (Speaker + Mic)", "Laptop hardware"),
+    ("m3", "03", "Bandwidth vs Resolution", "Bandwidth study"),
+    ("m4", "04", "How Much Noise Before It Fails?", "Monte Carlo sweep"),
+    ("m5", "05", "Real Sound Test (Speaker + Mic)", "Laptop hardware"),
 ]
 SCREEN_TITLE = {key: title for key, _, title, _ in SCREENS}
 
@@ -237,7 +238,7 @@ page = st.session_state["page"]
 
 def render_topbar(active: str) -> None:
     with st.container(key="topbar"):
-        cols = st.columns([2.0, 2.0, 2.6, 2.4, 2.4], vertical_alignment="center")
+        cols = st.columns([2.4] + [2.2] * len(SCREENS), vertical_alignment="center")
         with cols[0]:
             if st.button("SONAR · Distance Simulator", key="nav_home",
                          type="tertiary", width="stretch"):
@@ -620,45 +621,6 @@ def render_screen_2() -> None:
         fig.update_xaxes(title_text="Distance (m)")
         show_chart(fig)
 
-    def draw_sweep(height):
-        state = st.session_state.get("m2_sweep_state", "idle")
-        stored = st.session_state.get("m2_sweep_result")
-
-        if state == "done" and stored is not None:
-            bandwidth = np.array(stored["bandwidth_hz"])
-            measured = np.array([np.nan if v is None else v * 100
-                                 for v in stored["resolved_m"]])
-            theory = np.array([np.nan if v is None else v * 100
-                               for v in stored["theory_m"]])
-            order = np.argsort(bandwidth)
-            fig = base_figure(height)
-            fig.add_scatter(x=bandwidth[order], y=theory[order], mode="lines",
-                            line=LINE_THRESH, name="theory c/2B")
-            fig.add_scatter(x=bandwidth[order], y=measured[order], mode="markers",
-                            marker=dict(color=ACCENT, size=9), name="measured")
-            fig.update_xaxes(title_text="Measured bandwidth (Hz)", type="log")
-            fig.update_yaxes(title_text="Closest separation (cm)", type="log")
-            show_chart(fig)
-            if st.button("Run again", key="m2_rerun", type="tertiary"):
-                st.session_state["m2_sweep_state"] = "idle"
-                st.rerun()
-            return
-
-        empty_state("Bandwidth vs resolution",
-                    "Measures how close two targets can get, for pulses of different "
-                    "bandwidth, and compares it with c / 2B. Takes a few seconds.")
-        if st.button("Run sweep", key="m2_run", type="primary"):
-            configs = [{"pulse_type": "gaussian", "duration_s": d, "freq_hz": 4000.0}
-                       for d in (0.008, 0.004, 0.002, 0.001)]
-            configs += [{"pulse_type": "chirp", "duration_s": 0.002, "freq_hz": 8000.0,
-                         "bandwidth_hz": b} for b in (2000.0, 4000.0, 6000.0)]
-            progress = st.progress(0.0, text="Measuring resolution…")
-            result = run_bandwidth_resolution_sweep(configs, m_fs, trials=8)
-            progress.progress(1.0, text="Done")
-            st.session_state["m2_sweep_result"] = result
-            st.session_state["m2_sweep_state"] = "done"
-            st.rerun()
-
     with main:
         if notes:
             st.markdown(f'<p class="stale">Adjusted to stay physical: {"; ".join(notes)}.</p>',
@@ -671,9 +633,6 @@ def render_screen_2() -> None:
             dict(eyebrow="Stage 2 · Detect", title="One peak per target?",
                  description="Envelope of the matched filter output.",
                  draw=draw_envelope),
-            dict(eyebrow="Study", title="Bandwidth vs resolution",
-                 description="Measured limit against the c / 2B prediction.",
-                 draw=draw_sweep),
         ], payoff_index=1)
 
     resolved = len(detected) >= len(distances)
@@ -714,8 +673,8 @@ def render_screen_2() -> None:
 # ==============================================================================
 
 
-def render_screen_3() -> None:
-    st.markdown(f'<p class="screen-title">{SCREEN_TITLE["m3"]}</p>',
+def render_screen_noise() -> None:
+    st.markdown(f'<p class="screen-title">{SCREEN_TITLE["m4"]}</p>',
                 unsafe_allow_html=True)
     st.caption("Repeats the whole measurement many times at each noise level and plots "
                "how wrong the distance gets.")
@@ -723,31 +682,31 @@ def render_screen_3() -> None:
     main, side = st.columns([1, 0.42], gap="small")
 
     with side:
-        with st.container(key="side_m3"):
+        with st.container(key="side_m5"):
             panel_header("Step 1", "Settings", "")
             sw_dist = st.slider("Evaluation distance (m)", 1.0, 20.0, 5.0, 1.0)
             snr_lo, snr_hi = st.slider("Noise range (SNR, dB)", -20, 24, (-12, 16), 2)
             sw_trials = st.slider("Trials per point", 5, 35, 12, 1)
             sw_pulse_type = st.selectbox("Pulse shape", ["gaussian", "chirp", "rect"],
-                                         key="m3_ptype")
+                                         key="m4_ptype")
             with st.expander("Advanced"):
                 snr_step = st.selectbox("Step size (dB)", [2, 3, 4], index=0)
                 sw_dur_ms = st.slider("Pulse length (ms)", 1.0, 10.0, 2.0, 0.5,
-                                      key="m3_dur")
+                                      key="m4_dur")
                 sw_fc = st.slider("Carrier frequency (Hz)", 1000.0, 10000.0, 4000.0,
-                                  250.0, key="m3_fc")
+                                  250.0, key="m4_fc")
                 sw_bandpass = st.checkbox("Also run with a band-pass filter", value=True)
 
             snr_values = [float(v) for v in range(snr_lo, snr_hi + 1, snr_step)]
             runs = len(snr_values) * sw_trials * (2 if sw_bandpass else 1)
             st.caption(f"{len(snr_values)} noise levels · {runs:,} simulated pulses")
-            run_now = st.button("Run the test", key="m3_run", type="primary",
+            run_now = st.button("Run the test", key="m4_run", type="primary",
                                 width="stretch")
 
     config = (sw_dist, tuple(snr_values), sw_trials, sw_pulse_type, sw_dur_ms,
               sw_fc, sw_bandpass)
-    stored = st.session_state.get("m3_result")
-    stored_config = st.session_state.get("m3_config")
+    stored = st.session_state.get("m4_result")
+    stored_config = st.session_state.get("m4_config")
 
     with main:
         with st.container(border=True, key="step2"):
@@ -772,8 +731,8 @@ def render_screen_3() -> None:
                             trials_per_snr=sw_trials, bandpass=True)["rmse_m"][0])
                 progress.empty()
                 stored = {"snr": snr_values, "plain": plain, "filtered": filtered or None}
-                st.session_state["m3_result"] = stored
-                st.session_state["m3_config"] = config
+                st.session_state["m4_result"] = stored
+                st.session_state["m4_config"] = config
                 stored_config = config
 
             if stored is None:
@@ -833,8 +792,8 @@ def record_live_acoustic(chirp, repeats=16, fs=AC_FS, amplitude=0.4, gap_s=0.250
     return sd.playrec(stereo, samplerate=int(fs), channels=1, blocking=True)[:, 0]
 
 
-def render_screen_4() -> None:
-    st.markdown(f'<p class="screen-title">{SCREEN_TITLE["m4"]}</p>',
+def render_screen_acoustic() -> None:
+    st.markdown(f'<p class="screen-title">{SCREEN_TITLE["m5"]}</p>',
                 unsafe_allow_html=True)
     st.caption("The same maths on real sound: a chirp out of the laptop speaker, the "
                "echo back through its microphone.")
@@ -846,7 +805,7 @@ def render_screen_4() -> None:
     main, side = st.columns([1, 0.42], gap="small")
 
     with side:
-        with st.container(key="side_m4"):
+        with st.container(key="side_m5"):
             results_slot = st.container(key="results")
             settings_tab, audio_tab = st.tabs(["Settings", "Audio"])
             with settings_tab:
@@ -856,11 +815,11 @@ def render_screen_4() -> None:
                 sources.append("Record now with your speaker and mic")
                 source = st.selectbox("Where the recording comes from", sources)
                 ac_speed = st.number_input("Speed of sound (m/s)", 320.0, 360.0, 343.0,
-                                           0.5, key="m4_speed")
+                                           0.5, key="m5_speed")
                 min_range = st.slider("Ignore closer than (m)", 0.1, 2.5, 1.0, 0.1,
-                                      key="m4_min")
+                                      key="m5_min")
                 max_range = st.slider("Ignore further than (m)", 3.0, 8.0, 5.0, 0.5,
-                                      key="m4_max")
+                                      key="m5_max")
                 live_repeats = 8
                 if source.startswith("Record now"):
                     live_repeats = st.selectbox("Chirps per burst", [8, 16], index=0)
@@ -953,7 +912,7 @@ def render_screen_4() -> None:
         show_chart(fig)
 
     with main:
-        stage_grid("m4", [
+        stage_grid("m5", [
             dict(eyebrow="Stage 1 · Compare", title="This recording vs the empty room",
                  description="Everything static appears in both traces.",
                  draw=draw_overlay),
@@ -996,9 +955,167 @@ def render_screen_4() -> None:
 # ROUTER
 # ==============================================================================
 
+# ==============================================================================
+# SCREEN 3 — BANDWIDTH VS RESOLUTION
+# ==============================================================================
+
+
+def render_screen_bandwidth() -> None:
+    st.markdown(f'<p class="screen-title">{SCREEN_TITLE["m3"]}</p>',
+                unsafe_allow_html=True)
+    st.caption("Measures the closest two targets can get for pulses of different "
+               "bandwidth, and compares the result with the textbook limit c / 2B.")
+
+    main, side = st.columns([1, 0.42], gap="small")
+
+    with side:
+        with st.container(key="side_m3"):
+            panel_header("Step 1", "Settings", "")
+            family = st.radio("Which pulses to compare",
+                              ["Both pulse types (recommended)",
+                               "Gaussians only — different pulse lengths",
+                               "Chirps only — same length, different bandwidth"],
+                              label_visibility="collapsed")
+            durations_ms = [8.0, 6.0, 4.0, 2.0, 1.0]
+            sweeps_hz = [1000.0, 2000.0, 4000.0, 6000.0]
+            if family.startswith("Both") or family.startswith("Gaussians"):
+                durations_ms = st.multiselect("Gaussian pulse lengths (ms)",
+                                              [8.0, 6.0, 4.0, 2.0, 1.0],
+                                              default=[8.0, 4.0, 2.0, 1.0])
+            if family.startswith("Both") or family.startswith("Chirps"):
+                sweeps_hz = st.multiselect("Chirp sweep widths (Hz)",
+                                           [1000.0, 2000.0, 3000.0, 4000.0, 6000.0],
+                                           default=[2000.0, 4000.0, 6000.0])
+            trials = st.slider("Trials per separation", 4, 24, 8, 2,
+                               help="Each trial nudges the pair to a slightly "
+                                    "different distance, so one lucky alignment "
+                                    "is not mistaken for a measurement.")
+
+            with st.expander("Advanced"):
+                success_pct = st.slider("Counts as resolved at (% of trials)",
+                                        30, 90, 50, 10)
+                base_distance_m = st.slider("Distance to the pair (m)", 2.0, 12.0,
+                                            5.0, 0.5)
+                widest_cm = st.slider("Widest separation to try (cm)", 40, 150, 120, 10)
+                step_cm = st.selectbox("Separation step (cm)", [1, 2, 5], index=0)
+                bw_fs = float(st.selectbox("Sampling rate (Hz)", [24000, 48000, 96000],
+                                           index=1, key="m3_fs"))
+                bw_speed = st.number_input("Speed of sound (m/s)", 100.0, 2000.0, 343.0,
+                                           1.0, key="m3_speed")
+                bw_prom = st.slider("Detection sensitivity", 0.05, 0.8, 0.4, 0.05,
+                                    key="m3_prom")
+                bw_minsep = st.slider("Minimum gap between detections (samples)",
+                                      2, 64, 8, 2, key="m3_minsep",
+                                      help="Deliberately small. The receiver's own "
+                                           "default is set by pulse length, not "
+                                           "bandwidth, and would flatten this curve.")
+
+            configs = []
+            if family.startswith("Both") or family.startswith("Gaussians"):
+                configs += [{"pulse_type": "gaussian", "duration_s": d / 1000.0,
+                             "freq_hz": 4000.0} for d in sorted(durations_ms, reverse=True)]
+            if family.startswith("Both") or family.startswith("Chirps"):
+                configs += [{"pulse_type": "chirp", "duration_s": 0.002,
+                             "freq_hz": 8000.0, "bandwidth_hz": b}
+                            for b in sorted(sweeps_hz)]
+
+            separations_m = [c / 100.0 for c in range(step_cm, widest_cm + 1, step_cm)]
+            st.caption(f"{len(configs)} pulses × up to {len(separations_m)} separations "
+                       f"× {trials} trials")
+            run_now = st.button("Run the study", key="m3_go", type="primary",
+                                width="stretch", disabled=not configs)
+            if not configs:
+                st.caption("Pick at least one pulse.")
+
+    config_key = (family, tuple(durations_ms), tuple(sweeps_hz), trials, success_pct,
+                  base_distance_m, widest_cm, step_cm, bw_fs, bw_speed, bw_prom, bw_minsep)
+    stored = st.session_state.get("m3_result")
+    stored_key = st.session_state.get("m3_key")
+
+    with main:
+        with st.container(border=True, key="step2"):
+            panel_header("Step 2", "The graph",
+                         "Both axes are log. A straight line means the measurement "
+                         "follows the same power law as the theory.")
+
+            if run_now and configs:
+                progress = st.progress(0.0, text="Starting…")
+                labels, bandwidths, resolved, theory = [], [], [], []
+                for index, cfg in enumerate(configs, start=1):
+                    progress.progress(index / len(configs),
+                                      text=f"{describe_pulse_config(cfg)} · "
+                                           f"{index} of {len(configs)}")
+                    one = run_bandwidth_resolution_sweep(
+                        [cfg], bw_fs, base_distance_m=base_distance_m,
+                        separations_m=separations_m, trials=trials,
+                        success_frac=success_pct / 100.0,
+                        min_separation_samples=bw_minsep, prominence_frac=bw_prom,
+                        speed_mps=bw_speed, seed=index)
+                    labels += one["labels"]; bandwidths += one["bandwidth_hz"]
+                    resolved += one["resolved_m"]; theory += one["theory_m"]
+                progress.empty()
+                stored = {"labels": labels, "bandwidth_hz": bandwidths,
+                          "resolved_m": resolved, "theory_m": theory}
+                st.session_state["m3_result"] = stored
+                st.session_state["m3_key"] = config_key
+                stored_key = config_key
+
+            if stored is None:
+                empty_state("Nothing measured yet",
+                            "Press <b>Run the study</b>. Each pulse is measured "
+                            "independently, so the result does not depend on which "
+                            "others are in the list.")
+            else:
+                if stored_key != config_key:
+                    st.markdown('<p class="stale">Settings changed since this run — '
+                                'run the study again to refresh.</p>',
+                                unsafe_allow_html=True)
+                bw = np.array(stored["bandwidth_hz"], dtype=float)
+                meas = np.array([np.nan if v is None else v * 100
+                                 for v in stored["resolved_m"]])
+                theo = np.array([np.nan if v is None else v * 100
+                                 for v in stored["theory_m"]])
+                order = np.argsort(bw)
+                is_chirp = np.array(["chirp" in l for l in stored["labels"]])
+
+                fig = base_figure(500)
+                fig.add_scatter(x=bw[order], y=theo[order], mode="lines",
+                                line=LINE_THRESH, name="theory  c / 2B",
+                                hovertemplate="%{x:.0f} Hz · %{y:.1f} cm<extra></extra>")
+                for mask, colour, symbol, name in (
+                        (~is_chirp, ACCENT, "circle", "gaussian — length varied"),
+                        (is_chirp, COMPARE, "triangle-up", "chirp — bandwidth varied")):
+                    if mask.any():
+                        fig.add_scatter(x=bw[mask], y=meas[mask], mode="markers",
+                                        marker=dict(color=colour, size=10, symbol=symbol),
+                                        name=name,
+                                        hovertemplate="%{x:.0f} Hz · %{y:.1f} cm<extra></extra>")
+                fig.update_xaxes(title_text="Measured −3 dB bandwidth (Hz)", type="log")
+                fig.update_yaxes(title_text="Closest separation resolved (cm)", type="log")
+                show_chart(fig)
+
+                ratios = [m / t for m, t in zip(meas, theo)
+                          if np.isfinite(m) and np.isfinite(t) and t > 0]
+                if ratios:
+                    st.caption(f"Measured resolution sits at {np.mean(ratios):.2f}× the "
+                               f"c / 2B limit on average — below 1.0 because the Rayleigh "
+                               f"criterion is deliberately conservative.")
+                st.dataframe(
+                    [{"Pulse": l,
+                      "Bandwidth": f"{b:.0f} Hz",
+                      "Resolved": f"{m:.0f} cm" if np.isfinite(m) else "not resolved",
+                      "Theory": f"{t:.1f} cm" if np.isfinite(t) else "—",
+                      "Ratio": f"{m / t:.2f}×" if np.isfinite(m) and np.isfinite(t) else "—"}
+                     for l, b, m, t in zip(stored["labels"], bw, meas, theo)],
+                    hide_index=True, width="stretch")
+
+
 if page == "home":
     render_home()
 else:
     render_topbar(page)
-    {"m1": render_screen_1, "m2": render_screen_2,
-     "m3": render_screen_3, "m4": render_screen_4}[page]()
+    {"m1": render_screen_1,
+     "m2": render_screen_2,
+     "m3": render_screen_bandwidth,
+     "m4": render_screen_noise,
+     "m5": render_screen_acoustic}[page]()
