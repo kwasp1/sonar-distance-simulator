@@ -11,3 +11,8 @@ results/*.wav
 physical_sonar_check/*_rx.npy
 physical_sonar_check/*_baseline.npy
 physical_sonar_check/*_excess.npy
+
+# Presentation slides (kept locally)
+presentation/
+venv/
+
